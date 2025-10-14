@@ -1,0 +1,22 @@
+Your task is to generate a "Reasoning" and a "Refined Observation" based on the inputs below.
+
+In the "Reasoning", analyze the user instruction and history to identify what information from the current observation is necessary to complete the remaining steps.  
+Think about what parts can be summarized or transformed to reduce length, while ensuring that future actions can still be executed based on the refined observation alone.
+
+In the "Refined Observation", include only the information that is minimal but sufficient for the next steps, possibly in a summarized or restructured format.  
+
+[Information source]
+# User Instruction
+{{ task }}
+
+# History of interactions
+{{ history }}
+
+# Observation at the current time step
+{{ observation }}
+
+[Output format]
+# Reasoning
+... your reasoning for what matters and how to optimize it ...
+# Refined Observation
+... reduced and actionable version, with required references preserved ...

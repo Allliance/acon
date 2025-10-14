@@ -1,0 +1,37 @@
+You are an expert prompt engineer tasked with refining an OBSERVATION COMPRESSION prompt.
+Rewrite the ORIGINAL PROMPT to reduce length of the LAST OBSERVATION while preserving essential information needed for the next reasoning step.
+Ground all changes in the PER-SAMPLE SIGNALS below.
+
+Constraints:
+- Keep Jinja placeholders exactly as in the ORIGINAL PROMPT, and only in the [INFORMATION SOURCE] section. Never insert or repeat them in any other part of the template (e.g., compression rules, reasoning instructions).
+- Add explicit, concrete rules that prevent verbosity and retain essential state.
+- The refined OBSERVATION SUMMARIZATION prompt should focus on summarizing or condensing the **latest observation**, not previous observations in the history.
+- Output ONLY the improved prompt template (no commentary, no JSON).
+
+Context: The following sampled entries are the ONLY ground-truth signals to use:
+{% for s in samples %}
+===== SAMPLE {{ loop.index0 }} =====
+- Suggestions:
+{% if s.suggestions and s.suggestions|length > 0 %}{% for imp in s.suggestions %}  - {{ imp }}
+{% endfor %}{% else %}  - (none){% endif %}
+
+- Problematic Observation Spans (abbreviated):
+{% if s.problematic_spans and s.problematic_spans|length > 0 %}{% for span in s.problematic_spans %}  - {{ span[:200] }}{% if span|length > 200 %}...{% endif %}
+{% endfor %}{% else %}  - (none){% endif %}
+
+- Missing / Needed Observation Spans:
+{% if s.missing_spans and s.missing_spans|length > 0 %}{% for span in s.missing_spans %}  - {{ span[:200] }}{% if span|length > 200 %}...{% endif %}
+{% endfor %}{% else %}  - (none){% endif %}
+
+- Issue Categories:
+{% if s.issue_categories and s.issue_categories|length > 0 %}{% for cat in s.issue_categories %}  - {{ cat }}
+{% endfor %}{% else %}  - (none){% endif %}
+
+{% endfor %}
+
+Original Prompt Template (verbatim between markers):
+<<<ORIGINAL_PROMPT>>>
+{{ original_prompt }}
+<<<ORIGINAL_PROMPT>>>
+
+Output only the improved prompt template text, ready to be used as a Jinja template.

@@ -1,0 +1,44 @@
+You are an expert prompt engineer tasked with refining an OBSERVATION SUMMARIZATION prompt.
+Rewrite the ORIGINAL PROMPT to reduce length of the SUMMARIZED LAST OBSERVATION while preserving factual continuity for the next reasoning step.
+Ground all changes in the PER-SAMPLE REDUCTION SIGNALS below. Do not aggregate across samples; use the patterns and rules as-is.
+
+Constraints:
+- Keep all Jinja placeholders (variables) in [Information source] from the original prompt. Do not place jinja variables outside [Information source].
+- Add explicit, concrete rules that prevent verbosity and retain essential state.
+- Do not include literal values; refer to variable names only.
+- The refined OBSERVATION SUMMARIZATION prompt should focus on summarizing or condensing the latest observation, not previous observations.
+- Output ONLY the improved prompt template (no extra commentary).
+
+Context (samples below are the only ground truth signals to use):
+- Average original observation size (chars) across sampled set: {{ avg_orig_chars }}
+
+{% for s in samples %}
+===== SAMPLE {{ loop.index0 }} =====
+- Session: {{ s.session or 'unknown-session' }}
+- Analysis Overview:
+{% if s.overview %}
+{% for k, v in s.overview.items() %}  - {{ k }}: {{ v }}
+{% endfor %}
+{% else %}  - (none provided)
+{% endif %}
+
+- Removals (patterns → action):
+{% for r in s.removals %}  - [{{ r.category | default('unknown') }}] {{ r.pattern | default('') }} -> {{ r.action | default('drop') }}
+{% endfor %}
+
+- KEEP examples (evidence-driven essentials):
+{% for k in s.keeps %}  - Reason: {{ k.reason | default('') }} | Evidence: {{ k.evidence_spans | default([]) | join('; ') }}
+{% endfor %}
+
+- Summary Rules:
+{% for rule in s.rules %}  - {{ rule }}
+{% endfor %}
+
+{% endfor %}
+
+Original Prompt Template (verbatim between markers):
+<<<ORIGINAL_PROMPT>>>
+{{ original_prompt }}
+<<<ORIGINAL_PROMPT>>>
+
+Output only the improved prompt template text, ready to be used as a Jinja template.

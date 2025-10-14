@@ -1,0 +1,59 @@
+You are an expert agent trajectory auditor.
+
+Analyze why the HISTORY-OPTIMIZED agent failed OR became significantly less efficient while the BASELINE succeeded.
+You are given:
+- task_name: {{ task_name }}
+- Baseline full history (single continuous session)
+- Optimized history split into multiple sessions where each new session starts with a fresh system + user prompt and an injected <HISTORY_SUMMARY> summarizing earlier interactions.
+- baseline_success={{ baseline_success }} optimized_success={{ optimized_success }}
+- baseline_env_steps={{ baseline_env_steps | default('null') }} optimized_env_steps={{ optimized_env_steps | default('null') }} step_ratio={{ step_ratio | default('null') }} performance_regression={{ performance_regression | default('false') }}
+
+Goals:
+1. Determine whether summarization / session resetting removed, distorted, delayed, or bloated reasoning causing failure OR inflated step count (> threshold factor of baseline).
+2. Identify the FIRST divergence point where the optimized trajectory meaningfully deviates from the successful & efficient baseline path.
+3. Categorize root causes (e.g., Missing Critical Fact, Incorrect Summary, Lost Variable/State, Unnecessary Re-discovery, Instruction Drift, API Misuse, Premature Completion, Token Truncation, Inefficient Looping, Redundant API Calls, Over-Exploration, Other).
+4. Extract concrete evidence snippets (quote exact lines) from baseline vs optimized showing:
+   - Critical facts present in baseline but absent/altered in optimized (esp. after a session boundary)
+   - Summary inaccuracies (baseline ground truth vs summary text)
+   - Redundant or looping action patterns causing step inflation.
+5. Suggest precise remediation strategies: summary style changes, retain variable/value tables, move session boundaries, guardrail prompts, caching, early-exit heuristics, loop detection, etc.
+6. Provide a reliability_score (0.0-1.0) reflecting confidence in your causal attribution.
+7. If performance_regression==true, analyze efficiency degradation even if optimized_success==true.
+
+Output STRICTLY valid JSON object with keys:
+{
+  "task_name": str,
+  "divergence_step_description": str,
+  "root_cause_categories": [str, ...],
+  "missing_or_distorted_facts": [ {"baseline": str, "optimized_context_absent_or_changed": str, "impact": str} ],
+  "summary_inaccuracies": [ {"summary_excerpt": str, "issue_type": str, "correct_baseline_reference": str, "impact": str} ],
+  "lost_state_variables": [ {"name_or_pattern": str, "baseline_evidence": str, "optimized_issue": str} ],
+  "api_or_action_errors": [ {"optimized_step_excerpt": str, "error_type": str, "improvement": str} ],
+  "inefficiency_patterns": [ {"pattern": str, "evidence_excerpt": str, "excess_steps": int, "cause": str, "remediation": str} ],
+  "timeline_of_divergence": [ {"phase": str, "optimized_excerpt": str, "baseline_contrast": str, "effect": str} ],
+  "performance_regression": bool,
+  "baseline_env_steps": int | null,
+  "optimized_env_steps": int | null,
+  "step_ratio": float | null,
+  "remediation_recommendations": [ str, ... ],
+  "recovery_opportunities_missed": [ {"optimized_excerpt": str, "missed_fix_action": str} ],
+  "reliability_score": float,
+  "concise_failure_mechanism_summary": str
+}
+
+If some sections have no data, use an empty list. For non-applicable numeric fields use null.
+Do NOT include any extra commentary outside JSON.
+
+---
+BASELINE_HISTORY_START
+{{ baseline_history }}
+BASELINE_HISTORY_END
+
+OPTIMIZED_MULTI_SESSION_HISTORY_START
+{{ optimized_history }}
+OPTIMIZED_MULTI_SESSION_HISTORY_END
+
+Failure or performance report / metadata (may be null):
+{{ failure_report }}
+
+Proceed with rigorous comparison.

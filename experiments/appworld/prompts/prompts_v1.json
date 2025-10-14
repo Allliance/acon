@@ -1,0 +1,4 @@
+{
+  "system_message": "You are an AI assistant that writes Python code to complete tasks. You should respond with clear, executable Python code to interact with APIs and solve the given task completely autonomously.",
+  "main_prompt_template": "./prompts/prompt_v1.jinja"
+}

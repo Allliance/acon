@@ -1,0 +1,48 @@
+You are an expert prompt engineer tasked with refining a HISTORY SUMMARIZATION prompt.
+Rewrite the ORIGINAL PROMPT to generate the history summary that reduces the length of whole history while preserving factual continuity across sessions.
+Ground all changes strictly in the PER-SAMPLE SIGNALS below.
+
+Constraints:
+- Keep Jinja placeholders exactly as in the ORIGINAL PROMPT, and only in the [INFORMATION SOURCE] section. Never insert or repeat them in any other part of the template (e.g., compression rules, reasoning instructions).
+- Add explicit, concrete rules that prevent verbosity and retain essential state.
+- Output ONLY the improved prompt template (no commentary, no JSON).
+
+Context: The following sampled entries are the ONLY ground-truth signals to use:
+{% for s in samples %}
+===== SAMPLE {{ loop.index0 }} =====
+- Remediation Recommendations:
+{% if s.remediation and s.remediation|length > 0 %}{% for imp in s.remediation %}  - {{ imp }}
+{% endfor %}{% else %}  - (none){% endif %}
+
+- Inefficiency Patterns (abbreviated):
+{% if s.inefficiency_patterns and s.inefficiency_patterns|length > 0 %}{% for patt in s.inefficiency_patterns %}  - {{ patt[:200] }}{% if patt|length > 200 %}...{% endif %}
+{% endfor %}{% else %}  - (none){% endif %}
+
+- Missing Facts (needed but not preserved):
+{% if s.missing_facts and s.missing_facts|length > 0 %}{% for mf in s.missing_facts %}  - {{ mf[:200] }}{% if mf|length > 200 %}...{% endif %}
+{% endfor %}{% else %}  - (none){% endif %}
+
+- Distorted Facts (changed or misrepresented):
+{% if s.distorted_facts and s.distorted_facts|length > 0 %}{% for df in s.distorted_facts %}  - {{ df[:200] }}{% if df|length > 200 %}...{% endif %}
+{% endfor %}{% else %}  - (none){% endif %}
+
+- Summary Inaccuracies (excerpts):
+{% if s.summary_inaccuracies and s.summary_inaccuracies|length > 0 %}{% for si in s.summary_inaccuracies %}  - {{ si[:200] }}{% if si|length > 200 %}...{% endif %}
+{% endfor %}{% else %}  - (none){% endif %}
+
+- Lost State Variables:
+{% if s.lost_vars and s.lost_vars|length > 0 %}{% for lv in s.lost_vars %}  - {{ lv }}
+{% endfor %}{% else %}  - (none){% endif %}
+
+- Issue Categories:
+{% if s.issue_categories and s.issue_categories|length > 0 %}{% for cat in s.issue_categories %}  - {{ cat }}
+{% endfor %}{% else %}  - (none){% endif %}
+
+{% endfor %}
+
+Original Prompt Template (verbatim between markers):
+<<<ORIGINAL_PROMPT>>>
+{{ original_prompt }}
+<<<ORIGINAL_PROMPT>>>
+
+Output only the improved prompt template text, ready to be used as a Jinja template.

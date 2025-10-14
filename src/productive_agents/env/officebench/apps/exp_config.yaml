@@ -1,0 +1,19 @@
+experiment:
+  exp_id: "debug-code-tool_az-gpt-4o"
+  model_id: "az-gpt-4o"
+  evaluation: "online"
+  memory: false
+  use_thinking_tokens: true
+  use_scratchpad: false
+env:
+  max_iter: 50
+model:
+  id: "az-gpt-4o"
+  name: "azure/gpt-4o"
+  ocr: "pytesseract"
+  memory:
+    mode:
+docker:
+  docker_name: "officebench"
+  dockerfile_path: "./docker/Dockerfile"
+prompt_file: "configs/prompts_v2.json"

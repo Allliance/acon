@@ -1,0 +1,9 @@
+type: "history"
+model: "gpt-4.1"
+compressor_type: "full"
+prompts:
+  prompt_system: "system_prompt"
+  prompt_history_user: "prompt_history"
+history_summarization_threshold: 4096
+baseline_strategy: "discard"
+preserve_last_k_turns: 5

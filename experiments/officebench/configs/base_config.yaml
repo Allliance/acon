@@ -1,0 +1,22 @@
+# Minimal configuration for OfficeBench experiments
+# Contains only the essential parameters actually used by the system
+
+# Experiment metadata
+exp_id: "default_experiment"
+model_name: "gpt-4o"
+tag: "debug"
+debug_mode: true
+
+# Agent configuration
+prompt_file: "./prompts/prompts_v3.json"
+max_iter: 50
+
+# Essential experiment settings
+use_workflow_memory: false
+use_thinking_tokens: true
+
+# Context optimization configuration (important for core experiments)
+co_config: null
+
+# Optional workflow memory file (only used if use_workflow_memory is true)
+# workflow_memory_file: "path/to/workflow/file.txt"

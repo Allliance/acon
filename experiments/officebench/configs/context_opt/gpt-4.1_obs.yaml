@@ -1,0 +1,7 @@
+type: "obs"
+model: "gpt-4.1"
+compressor_type: "full"
+prompts:
+  prompt_system: "system_prompt"
+  prompt_user: "prompt_user"
+obs_summarization_threshold: 256

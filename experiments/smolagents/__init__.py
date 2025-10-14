@@ -1,0 +1,1 @@
+# Minimal Smolagents experiments package

@@ -1,0 +1,54 @@
+You are an expert context compression diagnostician.
+Scope: You will receive, separately, (1) the history context optimizer's input/output for a single pass and (2) ONLY the immediate next session (session i+1) for grounding. No other raw logs are included.
+Goal: Propose precise, actionable edits that safely reduce the length of "OUTPUT_SUMMARY" of <<<OPTIMIZED_HISTORY>>> based on the given optimizer input (INPUT_PROMPT) and NEXT_SESSION info.
+Focus on CONTENT in the OUTPUT_SUMMARY, not the formatting. Identify which information can be dropped or compressed considering its impact on the next session.
+
+Inputs:
+- task_name: {{ task_name }}
+- orig_chars (chars of optimizer output only): {{ orig_chars }}
+
+History Optimizer IO (single pass):
+<<<OPTIMIZED_HISTORY>>>
+{{ optimized_history }}
+<<<END_OPTIMIZED_HISTORY>>>
+
+Next Session (session i+1):
+<<<NEXT_SESSION>>>
+{{ next_session }}
+<<<END_NEXT_SESSION>>>
+
+Output a focused analysis JSON with concrete recommendations. Base every suggestion only on the content above; do not invent missing details or request additional context. Wrap the JSON between the markers below.
+
+Schema:
+{
+  "overview": {
+  "orig_chars": int,
+    "main_themes": [str]
+  },
+  "analysis": str,
+  "keep": [
+    // Essential items to keep verbatim or lightly summarized
+    {
+      "reason": str,
+      "evidence_spans": ["short quote or regex-like locator"]
+    }
+  ],
+  "remove_or_shorten": [
+    // Redundant, verbose, or low-value items to delete or compress
+    {
+      "category": "repetition|chatter|tool-logs|formatting|meta",
+      "pattern": "regex-like description or keywords",
+      "example_span": "short quote",
+      "action": "drop|summarize",
+      "risk_if_removed": "low|medium|high"
+    }
+  ],
+  "summarize_rules": [
+    // Generic rules that can be applied repeatedly
+    "Bullet rule, e.g., 'Summarize identical confirmations into one line'"
+  ],
+  "critical_refs": [
+    // IDs, filenames, URLs, states that must remain
+    "short item"
+  ]
+}

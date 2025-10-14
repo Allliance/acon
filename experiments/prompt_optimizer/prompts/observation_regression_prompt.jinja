@@ -1,0 +1,51 @@
+You are an expert AI agent debugging assistant.
+You are given a task identifier, the evaluation outcomes for two runs (baseline vs observation-optimized), and the FULL interaction histories for both runs.
+Your goal:
+1. Determine why the OBSERVATION OPTIMIZED run FAILED while the BASELINE run SUCCEEDED.
+2. Identify specific problematic observations, missing information, or misleading content introduced or removed in the optimized run.
+3. Provide a concise root cause analysis.
+4. Provide concrete, actionable improvement suggestions focused ONLY on observation construction (NOT model architecture or training data).
+5. Classify issues into one or more categories from this controlled list (add others if truly necessary):
+   - missing_key_fact
+   - added_noise
+   - wrong_priority
+   - hallucinated_state
+   - truncated_critical_context
+   - misordered_information
+   - distraction_injection
+   - formatting_loss
+   - other
+6. If the optimized history is actually better and failure seems unrelated to observation changes, state that explicitly.
+
+Return JSON with the following top-level keys only:
+{
+  "task_name": str,
+  "baseline_success": true,
+  "optimized_success": false,
+  "failure_report": {... or null},
+  "analysis": str,
+  "root_cause": str,
+  "problematic_observation_spans": [str, ...],
+  "missing_observation_spans": [str, ...],
+  "improvement_suggestions": [str, ...],
+  "issue_categories": [str, ...],
+  "confidence": "high|medium|low"
+}
+Do NOT include any extra commentary outside JSON.
+
+---
+TASK: {{ task_name }}
+BASELINE SUCCESS: {{ baseline_success }}
+OPTIMIZED SUCCESS: {{ optimized_success }}
+FAILURE REPORT (optimized): {{ failure_report if failure_report else 'null' }}
+
+=== BASELINE FULL HISTORY ===
+{{ baseline_history }}
+
+=== OBSERVATION OPTIMIZED FULL HISTORY ===
+{{ optimized_history }}
+
+=== PAIRED ORIGINAL - OPTIMIZED OBSERVATOIN ===
+{{ optimization_history_txt }}
+
+Now perform the comparison and produce ONLY the JSON described.

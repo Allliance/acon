@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Blueprint Evaluation Dashboard</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 10px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th {
+            background-color: #f2f2f2;
+            padding: 12px;
+            text-align: left;
+            border: 1px solid #ddd;
+            position: sticky;
+            top: 0;
+        }
+        td {
+            padding: 10px;
+            border: 1px solid #ddd;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        tr:hover {
+            background-color: #f1f1f1;
+        }
+        .success-high {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .success-medium {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        .success-low {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .model-link {
+            color: #007bff;
+            text-decoration: none;
+        }
+        .model-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <h1>Blueprint Evaluation Results</h1>
+    
+    <table>
+        <thead>
+            <tr>
+                <th>Model</th>
+                <th>Tag</th>
+                <th>Single App</th>
+                <th>Two Apps</th>
+                <th>Three Apps</th>
+                <th>Overall Success</th>
+                <th>Details</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for experiment in experiment_list %}
+                <tr>
+                    <td>{{ experiment.model_name }}</td>
+                    <td>{{ experiment.tag_name }}</td>
+                    
+                    
+                    {% set app1_success = experiment.app_tags["1"].success %}
+                    {% set app1_available = experiment.app_tags["1"].total_available %}
+                    {% set app1_percent = (app1_success / app1_available * 100)|round(1) if app1_available > 0 else 0 %}
+                    
+                    {% set app2_success = experiment.app_tags["2"].success %}
+                    {% set app2_available = experiment.app_tags["2"].total_available %}
+                    {% set app2_percent = (app2_success / app2_available * 100)|round(1) if app2_available > 0 else 0 %}
+                    
+                    {% set app3_success = experiment.app_tags["3"].success %}
+                    {% set app3_available = experiment.app_tags["3"].total_available %}
+                    {% set app3_percent = (app3_success / app3_available * 100)|round(1) if app3_available > 0 else 0 %}
+                    
+                    {% set overall_success = experiment.overall.success %}
+                    {% set overall_available = experiment.overall.total_available  %}
+                    {% set overall_percent = (overall_success / overall_available * 100)|round(1) if overall_available > 0 else 0 %}
+                    
+                    <td class="{% if app1_percent >= 80 %}success-high{% elif app1_percent >= 50 %}success-medium{% else %}success-low{% endif %}">
+                        {{ app1_success }}/{{ app1_available }} ({{ app1_percent }}%)
+                    </td>
+                    <td class="{% if app2_percent >= 80 %}success-high{% elif app2_percent >= 50 %}success-medium{% else %}success-low{% endif %}">
+                        {{ app2_success }}/{{ app2_available }} ({{ app2_percent }}%)
+                    </td>
+                    <td class="{% if app3_percent >= 80 %}success-high{% elif app3_percent >= 50 %}success-medium{% else %}success-low{% endif %}">
+                        {{ app3_success }}/{{ app3_available }} ({{ app3_percent }}%)
+                    </td>
+                    <td class="{% if overall_percent >= 80 %}success-high{% elif overall_percent >= 50 %}success-medium{% else %}success-low{% endif %}">
+                        {{ overall_success }}/{{ overall_available }} ({{ overall_percent }}%)
+                    </td>
+                    
+                    <td>
+                        <a href="/exp?model={{ experiment.model_name }}&tag={{ experiment.tag_name }}" class="model-link">View Details</a>
+                    </td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div>
+        <h2>Run New Evaluation</h2>
+        <form action="/exp" method="get">
+            <label for="model">Model:</label>
+            <input type="text" id="model" name="model" value="{{ default_model_name }}" required>
+            
+            <label for="tag">Tag:</label>
+            <input type="text" id="tag" name="tag" value="{{ default_tag_name }}" required>
+            
+            <button type="submit">Run Evaluation</button>
+        </form>
+    </div>
+</body>
+</html>
