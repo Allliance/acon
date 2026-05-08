@@ -104,7 +104,68 @@ def run_sample(
     agent.dump_history(sample_dir)
     env.dump_history(sample_dir)
 
+    # Write human-readable trajectory log
+    _dump_trajectory_text(
+        sample_dir=sample_dir,
+        question=ex.question,
+        answer=ex.answer,
+        prediction=pred,
+        llm_history=agent.memory_manager.llm_history,
+        env_trajectory=env.trajectory,
+    )
+
     return pred, result
+
+
+def _dump_trajectory_text(
+    sample_dir: str,
+    question: str,
+    answer: Any,
+    prediction: str,
+    llm_history: list,
+    env_trajectory: list,
+) -> None:
+    """Write a readable turn-by-turn trajectory to trajectory.txt."""
+    lines = []
+    lines.append("=" * 80)
+    lines.append(f"TASK:\n{question}")
+    lines.append(f"\nGOLD ANSWER:\n{answer}")
+    lines.append(f"\nPREDICTION:\n{prediction or '(none)'}")
+    lines.append("=" * 80)
+
+    # Flatten all sessions into one stream; mark session breaks
+    step = 0
+    for s_idx, session in enumerate(llm_history):
+        if s_idx > 0:
+            lines.append(f"\n{'─'*40} [Session {s_idx} — after compression] {'─'*40}\n")
+        i = 0
+        while i < len(session):
+            msg = session[i]
+            role = msg["role"]
+            content = msg["content"]
+            if role == "system":
+                lines.append(f"[SYSTEM PROMPT — {len(content)} chars, omitted]\n")
+                i += 1
+            elif role == "user":
+                if i <= 1 and s_idx == 0:
+                    # First user turn is the task instruction — already shown above
+                    lines.append(f"[TASK PROMPT — {len(content)} chars, omitted]\n")
+                else:
+                    lines.append(f"── Observation ──\n{content}\n")
+                i += 1
+            elif role == "assistant":
+                step += 1
+                lines.append(f"{'━'*60}")
+                lines.append(f"Step {step}")
+                lines.append(f"{'━'*60}")
+                lines.append(content)
+                lines.append("")
+                i += 1
+
+    lines.append("=" * 80)
+    log_path = os.path.join(sample_dir, "trajectory.txt")
+    with open(log_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
 
 
 def main(

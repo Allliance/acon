@@ -22,7 +22,8 @@ class WikipediaRetrieverTool(Tool):
         },
         "n_results": {
             "type": "integer",
-            "description": "The number of results to return. Minumum is 3. Maximum is 10."
+            "description": "The number of results to return. Minimum is 3. Maximum is 10.",
+            "nullable": True,
         }
     }
     output_type = "string"
@@ -35,7 +36,7 @@ class WikipediaRetrieverTool(Tool):
             self.port = "8005"
         self.url = f"http://127.0.0.1:{self.port}/retrieve"
 
-    def forward(self, query: str, n_results: int) -> str:
+    def forward(self, query: str, n_results: int = 3) -> str:
         # return "Test Tool"
         import requests
 

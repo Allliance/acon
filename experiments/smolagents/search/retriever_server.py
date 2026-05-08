@@ -24,6 +24,7 @@ parser.add_argument("--index_path", type=str, default="search/database/wikipedia
 parser.add_argument("--corpus_path", type=str, default="search/database/wikipedia/wiki-18.jsonl", help="Local corpus file.")
 parser.add_argument("--topk", type=int, default=3, help="Number of retrieved passages for one query.")
 parser.add_argument("--retriever_model", type=str, default="intfloat/e5-base-v2", help="Name of the retriever model.")
+parser.add_argument("--port", type=int, default=8005, help="Port for the retriever server.")
 
 args = parser.parse_args()
 
@@ -367,21 +368,18 @@ def retrieve_endpoint(request: QueryRequest):
     if not request.topk:
         request.topk = config.retrieval_topk  # fallback to default
 
-    # Perform batch retrieval
+    # Always retrieve with scores so unpacking is consistent
     results, scores = retriever.batch_search(
         query_list=request.queries,
         num=request.topk,
-        return_score=request.return_scores
+        return_score=True,
     )
-    
+
     # Format response
     resp = []
     for i, single_result in enumerate(results):
         if request.return_scores:
-            # If scores are returned, combine them with results
-            combined = []
-            for doc, score in zip(single_result, scores[i]):
-                combined.append({"document": doc, "score": score})
+            combined = [{"document": doc, "score": score} for doc, score in zip(single_result, scores[i])]
             resp.append(combined)
         else:
             resp.append(single_result)
@@ -390,4 +388,4 @@ def retrieve_endpoint(request: QueryRequest):
 
 if __name__ == "__main__":
     # 3) Launch the server. By default, it listens on http://127.0.0.1:8000
-    uvicorn.run(app, host="0.0.0.0", port=8005)
+    uvicorn.run(app, host="0.0.0.0", port=args.port)

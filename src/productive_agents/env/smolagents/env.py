@@ -60,8 +60,10 @@ class SmolagentsEnv(BaseLanguageBasedEnv):
         self.python_executor = LocalPythonExecutor(
             additional_authorized_imports=self.additional_authorized_imports,
         )
-        tools = [WikipediaRetrieverTool()]
-        self.tools = {tool.name: tool for tool in tools}
+        retriever_port = os.environ.get("RETRIEVER_PORT", "8005")
+        retriever_tool = WikipediaRetrieverTool(port=retriever_port)
+        self.tools = {retriever_tool.name: retriever_tool}
+        self.tools["web_search"] = retriever_tool  # alias used in few-shot examples
         self.tools.setdefault("final_answer", FinalAnswerTool())
 
         self.logger.info(f"Smolagents environment initialized with config: {self.config}")
@@ -178,7 +180,12 @@ class SmolagentsEnv(BaseLanguageBasedEnv):
             return observation, 0.0, False, {"error": str(e)}
     
     def _clean_code(self, code: str) -> str:
-        code_action = parse_code_blobs(code, ("```python", "```"))
+        # The agent's action processor already extracts raw code from the response,
+        # so there may be no markdown fences left. Fall back to the code as-is.
+        try:
+            code_action = parse_code_blobs(code, ("```python", "```"))
+        except Exception:
+            code_action = code
         code_action = fix_final_answer_code(code_action)
         return code_action
 

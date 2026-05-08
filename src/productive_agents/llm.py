@@ -126,9 +126,8 @@ def calculate_api_cost(model_name: str, input_tokens: int, output_tokens: int) -
             break
     
     if pricing is None:
-        # Default to gpt-4o pricing if model not found
-        logger.warning(f"No pricing found for model {model_name}, using gpt-4o pricing")
-        pricing = MODEL_PRICING['gpt-4o']
+        logger.warning(f"No pricing found for model {model_name}, cost will be reported as 0.0")
+        return 0.0
     
     # Calculate cost (pricing is per 1M tokens)
     input_cost = (input_tokens / 1_000_000) * pricing['input']
@@ -470,8 +469,9 @@ class vLLM(BaseLLMModel):
     def __init__(self, model_name, system_message=None, log_file=None, log_level=logging.INFO, lora_name=None):
         super().__init__(model_name, system_message, log_file, log_level)
         
+        vllm_port = os.environ.get("VLLM_PORT", "8000")
         self.client = OpenAI(
-            base_url="http://localhost:8000/v1",
+            base_url=f"http://localhost:{vllm_port}/v1",
             api_key="token-abc",
         )
         self.lora_name = lora_name
@@ -496,7 +496,7 @@ class vLLM(BaseLLMModel):
 
             options["extra_body"] = {
                 "presence_penalty": 0.5, # Default presence penalty
-                "chat_template_kwargs": {"enable_thinking": False},
+                "chat_template_kwargs": {"enable_thinking": True},
             }  
             
             completion = self.client.chat.completions.create(
@@ -519,7 +519,7 @@ class vLLM(BaseLLMModel):
             return completion.choices[0].message.content
         except Exception as e:
             logger.error(f"vLLM generation Error: {e}")
-            return "None"
+            raise
 
 class vLLMLocal(BaseLLMModel):
     def __init__(self, model_name, system_message=None, lora_path=None):
