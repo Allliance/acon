@@ -466,12 +466,27 @@ class Gemini(BaseLLMModel):
 
 
 class vLLM(BaseLLMModel):
-    def __init__(self, model_name, system_message=None, log_file=None, log_level=logging.INFO, lora_name=None):
+    def __init__(self, model_name, system_message=None, log_file=None, log_level=logging.INFO, lora_name=None, port=None, base_url=None):
         super().__init__(model_name, system_message, log_file, log_level)
-        
-        vllm_port = os.environ.get("VLLM_PORT", "8000")
+
+        # Resolution order for the endpoint:
+        #   1. explicit base_url kwarg
+        #   2. VLLM_BASE_URL env var (full URL or "host:port")
+        #   3. explicit port kwarg → http://localhost:<port>/v1
+        #   4. VLLM_PORT env var    → http://localhost:<port>/v1
+        resolved = base_url or os.environ.get("VLLM_BASE_URL")
+        if resolved:
+            resolved = resolved.strip()
+            if not resolved.startswith("http://") and not resolved.startswith("https://"):
+                resolved = "http://" + resolved
+            if not resolved.rstrip("/").endswith("/v1"):
+                resolved = resolved.rstrip("/") + "/v1"
+        else:
+            vllm_port = port if port is not None else os.environ.get("VLLM_PORT", "8000")
+            resolved = f"http://localhost:{vllm_port}/v1"
+        self.base_url = resolved
         self.client = OpenAI(
-            base_url=f"http://localhost:{vllm_port}/v1",
+            base_url=resolved,
             api_key="token-abc",
         )
         self.lora_name = lora_name
@@ -494,11 +509,23 @@ class vLLM(BaseLLMModel):
             if n > 1:
                 options["temperature"] = 0.6  # Use higher temp for multiple samples
 
+            # Stop sequences (e.g. smolagents' "Observation:") can collide with
+            # text the model writes *inside* a <think> block, halting generation
+            # mid-thought and leaving content empty. Disable hidden thinking
+            # whenever the caller passes a stop sequence; the visible "Thought:"
+            # rationale in the smolagents prompt still works.
+            stop = kwargs.get("stop") or kwargs.get("stop_sequences")
+            enable_thinking = not bool(stop)
             options["extra_body"] = {
                 "presence_penalty": 0.5, # Default presence penalty
-                "chat_template_kwargs": {"enable_thinking": True},
-            }  
-            
+                "chat_template_kwargs": {"enable_thinking": enable_thinking},
+            }
+
+            # Forward stop sequences (smolagents/unified_agent passes them as
+            # `stop_sequences`; OpenAI-compat clients expect `stop`).
+            if stop:
+                options["stop"] = stop
+
             completion = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=messages,
@@ -514,9 +541,21 @@ class vLLM(BaseLLMModel):
                 # If no usage info, at least track the request
                 self.total_requests += 1
             
+            def _content_of(choice):
+                # With Qwen3's `--reasoning-parser qwen3`, the <think>...</think>
+                # block is stripped from `content` and exposed via
+                # `reasoning_content`. If the model emits ONLY thinking before
+                # hitting a stop sequence, `content` can be None — fall back to
+                # reasoning_content so downstream regex doesn't crash.
+                msg = choice.message
+                c = getattr(msg, "content", None)
+                if c is None or c == "":
+                    c = getattr(msg, "reasoning_content", None) or ""
+                return c
+
             if n > 1:
-                return [choice.message.content for choice in completion.choices]
-            return completion.choices[0].message.content
+                return [_content_of(choice) for choice in completion.choices]
+            return _content_of(completion.choices[0])
         except Exception as e:
             logger.error(f"vLLM generation Error: {e}")
             raise

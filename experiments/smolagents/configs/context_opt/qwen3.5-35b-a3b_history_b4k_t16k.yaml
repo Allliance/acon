@@ -1,0 +1,15 @@
+# Prompting baseline with the same model (Qwen3.5-35B-A3B) for agent + compressor.
+# Trigger: compress once the older history exceeds 16384 tokens.
+# Budget : the compressor is instructed to produce <= 4096 tokens.
+# Last turn is kept intact so the agent doesn't lose context.
+type: "history"
+model: "Qwen/Qwen3.5-35B-A3B"
+compressor_type: "full"
+prompts:
+  prompt_system: "system_prompt"
+  prompt_history_user: "prompt_history_v2"
+history_summarization_threshold: 12288
+compression_budget: 4096
+preserve_last_k_turns: 1
+history_summary_rule: "reset"
+# Compressor endpoint resolved from VLLM_COMPRESSOR_BASE_URL env var at runtime.

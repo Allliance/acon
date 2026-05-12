@@ -1,0 +1,11 @@
+# NOTE: gpt-oss-120b is served via vLLM (LLMManager routes "gpt-oss" to vLLM,
+# not the OpenAI API). Adjust `model` to the exact HF repo id you serve.
+type: "history"
+model: "openai/gpt-oss-120b"
+compressor_type: "full"
+prompts:
+  prompt_system: "system_prompt"
+  prompt_history_user: "prompt_history_v2"
+history_summarization_threshold: 2048
+preserve_last_k_turns: 1
+history_summary_rule: "reset"

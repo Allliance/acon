@@ -68,15 +68,38 @@ class HistoryOptimizer(BaseContextOptimizer):
             self.lora_name = config.get("lora_name", None)
         self.temperature = config.get("temperature", 0.0)
 
+        # Optional compressor endpoint (separate vLLM server). The compressor
+        # can be addressed by either a base URL or a port; URL wins.
+        self.compressor_port = config.get("compressor_port", None)
+        if self.compressor_port is None:
+            env_port = os.environ.get("VLLM_COMPRESSOR_PORT")
+            if env_port:
+                self.compressor_port = int(env_port)
+        self.compressor_base_url = config.get("compressor_base_url", None) \
+            or os.environ.get("VLLM_COMPRESSOR_BASE_URL")
+
+        # Compression budget (tokens). Used by selection baselines AND, when
+        # passed to the prompt template, tells the LLM compressor to stay
+        # within that size.
+        self.compression_budget = config.get("compression_budget", None)
+
         if llm:
             self.llm = llm
             # assign the system message to the llm
         else:
-            # Lazy import to avoid circular import with agents during module import
-            from productive_agents.agents.utils import LLMManager
-            self.llm = LLMManager.create_llm(
-                self.model_name, '', self.system_message, self.lora_name
-            )
+            # Skip LLM init for pure-selection baselines (fifo/mask/random) which
+            # never call .generate(). This avoids needing a vLLM server for them.
+            baseline_strategy = config.get("baseline_strategy", "none")
+            if baseline_strategy in {"fifo", "mask_obs", "mask_action", "random"}:
+                self.llm = None
+            else:
+                # Lazy import to avoid circular import with agents during module import
+                from productive_agents.agents.utils import LLMManager
+                self.llm = LLMManager.create_llm(
+                    self.model_name, '', self.system_message, self.lora_name,
+                    port=self.compressor_port,
+                    base_url=self.compressor_base_url,
+                )
 
         self.use_llmlingua = config.get("use_llmlingua", False)
         
@@ -185,8 +208,11 @@ class HistoryOptimizer(BaseContextOptimizer):
         
         # Full mode: include all history
         prompt_args["history"] = history
+        # Surface the compression budget to the template so the compressor
+        # can target it. Rendered conditionally in the Jinja template.
+        prompt_args["budget"] = self.compression_budget
         template_name = self.history_template
-        
+
         # Render the prompt
         prompt = self.render_template(template_name, **prompt_args)
         

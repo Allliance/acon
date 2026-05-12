@@ -1,0 +1,12 @@
+# Prompting baseline: same naive-prompt compression as gpt-4.1_history,
+# but the compressor LLM is Qwen3.5-35B-A3B served on VLLM_COMPRESSOR_PORT.
+type: "history"
+model: "Qwen/Qwen3.5-35B-A3B"
+compressor_type: "full"
+prompts:
+  prompt_system: "system_prompt"
+  prompt_history_user: "prompt_history_v2"
+history_summarization_threshold: 2048
+preserve_last_k_turns: 1
+history_summary_rule: "reset"
+# compressor_port: 8010  # optional override; else uses VLLM_COMPRESSOR_PORT env var

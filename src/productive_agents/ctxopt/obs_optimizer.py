@@ -65,13 +65,24 @@ class ObservationOptimizer(BaseContextOptimizer):
 
         self.obs_summarization_threshold = config.get("obs_summarization_threshold", -1)
 
+        # Optional compressor endpoint (separate vLLM server).
+        self.compressor_port = config.get("compressor_port", None)
+        if self.compressor_port is None:
+            env_port = os.environ.get("VLLM_COMPRESSOR_PORT")
+            if env_port:
+                self.compressor_port = int(env_port)
+        self.compressor_base_url = config.get("compressor_base_url", None) \
+            or os.environ.get("VLLM_COMPRESSOR_BASE_URL")
+
         # Initialize LLM (lazy import to avoid circular dependency at module import time)
         if llm is not None:
             self.llm = llm
         else:
             from productive_agents.agents.utils import LLMManager  # local import
             self.llm = LLMManager.create_llm(
-                self.model_name, '', self.system_message, self.lora_name
+                self.model_name, '', self.system_message, self.lora_name,
+                port=self.compressor_port,
+                base_url=self.compressor_base_url,
             )
         self.use_llmlingua = config.get("use_llmlingua", False)
         

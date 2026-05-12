@@ -1,0 +1,12 @@
+# Mask actions: keep most recent turns within budget; assistant/action
+# content is replaced with "[ACTION MASKED]" (only observations remain).
+type: "history"
+model: "none"
+compressor_type: "full"
+prompts:
+  prompt_system: "system_prompt"
+  prompt_history_user: "prompt_history_v2"
+history_summarization_threshold: 2048
+baseline_strategy: "mask_action"
+compression_budget: 2048
+preserve_last_k_turns: 1

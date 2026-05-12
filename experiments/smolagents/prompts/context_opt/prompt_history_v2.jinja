@@ -26,11 +26,13 @@ List completed subtasks or successful outcomes, with brief results if applicable
 
 ## PRIORITIZE
 
-1. Keep all sections relevant and concise.  
-2. Use reusable structured formats when summarizing artifacts.  
+1. Keep all sections relevant and concise.
+2. Use reusable structured formats when summarizing artifacts.
 3. Ensure agent can resume task with no loss of information.
 4. Include key info from errors or failed attempts to prevent repeated mistakes.
 5. Preserve all essential artifacts and data needed to complete the task.
+{% if budget %}6. **Hard length limit: your summary MUST be at most {{ budget }} tokens.** Drop the least-load-bearing details first; keep facts, IDs, and artifacts the agent needs to finish the task. Do not exceed the budget.
+{% endif %}
 
 ---
 

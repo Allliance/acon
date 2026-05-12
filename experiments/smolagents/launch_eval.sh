@@ -16,12 +16,17 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ── defaults ──────────────────────────────────────────────────────────────────
-MODEL="${MODEL:-Qwen/Qwen3.5-9B}"
-RETRIEVER_PORT="${RETRIEVER_PORT:-8005}"
+MODEL="${MODEL:-Qwen/Qwen3.5-35B-A3B}"
+RETRIEVER_PORT="${RETRIEVER_PORT:-8001}"
 VLLM_PORT="${VLLM_PORT:-8000}"
 
-INDEX_PATH="/home/aa3242/scratch/search-r1/bm25"
-CORPUS_PATH="/home/aa3242/scratch/search-r1/wiki-18.jsonl"
+
+BM25_DATA_DIR=/gpfs/radev/project/cohan/hl2222/data/search-r1
+BM25_INDEX_PATH=$BM25_DATA_DIR/bm25
+BM25_CORPUS_PATH=$BM25_DATA_DIR/wiki-18.jsonl
+
+INDEX_PATH=$BM25_INDEX_PATH
+CORPUS_PATH=$BM25_CORPUS_PATH
 
 # ── port discovery ─────────────────────────────────────────────────────────────
 while ss -tlnp 2>/dev/null | grep -q ":${RETRIEVER_PORT} "; do
@@ -53,6 +58,9 @@ trap cleanup EXIT INT TERM
 RETRIEVER_LOG="/home/aa3242/scratch/logs/retriever/${SLURM_JOB_ID}.log"
 echo "[launch] Starting retriever server (log: $RETRIEVER_LOG)..."
 
+# pyserini needs a JVM. Load Java module so `javac` is on PATH for jnius.
+module load Java/21.0.2 2>/dev/null || true
+
 nohup conda run -n retriever python "$SCRIPT_DIR/search/retriever_server.py" \
     --index_path  "$INDEX_PATH"  \
     --corpus_path "$CORPUS_PATH" \
@@ -66,11 +74,17 @@ echo "[launch] Starting vLLM server (log: $VLLM_LOG)..."
 
 # Run serve_vllm.sh in its own process group so we can kill all children.
 # Redirect output so we can monitor it; the script itself waits for readiness.
-setsid bash /home/aa3242/serve_vllm.sh \
-    -m "$MODEL" \
-    -p "$VLLM_PORT" \
-    -l 65536 \
-    --thinking \
+# serve_vllm.sh takes the model as a positional arg and reads config from
+# env vars; extra flags after the model are forwarded to `vllm serve`.
+setsid env \
+    VLLM_BIN="$HOME/scratch/envs/vllm/bin/vllm" \
+    VLLM_LIB="$HOME/scratch/envs/vllm/lib" \
+    VLLM_GPU_MEM_UTIL=0.92 \
+    bash "$HOME/serve_vllm.sh" \
+        -m "$MODEL" \
+        -p "$VLLM_PORT" \
+        -l 65536 \
+        --thinking \
     > "$VLLM_LOG" 2>&1 &
 VLLM_PID=$!
 

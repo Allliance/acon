@@ -46,6 +46,9 @@ class MemoryManager:
 
         self.history_summary_interval = co_config.get("history_summary_interval", -1) if co_config else -1  # Interval for history summarization
         self.retrieve_turns = co_config.get("retrieve_turns", 5) if co_config else 5  # Number of turns to retrieve in "retrieve" baseline strategy
+        # Token budget used by selection-based baselines (fifo / mask_obs / mask_action / random).
+        self.compression_budget = co_config.get("compression_budget", 2048) if co_config else 2048
+        self.random_seed = co_config.get("random_seed", 0) if co_config else 0
 
         hist_version = co_config.get("history_version", 1) if co_config else 1
         hist_cls = HistoryOptimizer
@@ -461,6 +464,35 @@ class MemoryManager:
                 if len(preserved_turns) < self.preserve_last_k_turns * 2:
                     return
                 optimized_history = ''
+                user_prompt = current_session[1]['content']
+            elif self.baseline_strategy in ("fifo", "mask_obs", "mask_action", "random"):
+                # Selection-based baselines: no LLM call. Pick / mask turns to
+                # fit a token budget; prepend the selection to preserved_turns.
+                if len(history_for_summarization) == 0:
+                    return
+                # Reuse the same threshold check the LLM optimizer uses so we
+                # only rebuild the session once the older history grows beyond
+                # the threshold.
+                if (
+                    self.history_optimizer is not None
+                    and not self.history_optimizer.check_summarization_needed(history_text)
+                ):
+                    return
+                from productive_agents.ctxopt.selection_strategies import apply_selection_strategy
+                # Use the optimizer's tokenizer if available; otherwise approximate.
+                if self.history_optimizer is not None:
+                    count_tokens = self.history_optimizer.count_tokens
+                else:
+                    count_tokens = lambda s: max(1, len(s) // 4) if s else 0
+                selected = apply_selection_strategy(
+                    self.baseline_strategy,
+                    history_for_summarization,
+                    self.compression_budget,
+                    count_tokens,
+                    seed=self.random_seed,
+                )
+                optimized_history = ''
+                preserved_turns = selected + preserved_turns
                 user_prompt = current_session[1]['content']
             elif self.baseline_strategy == "retrieve":
                 # check the size of preserved turns
