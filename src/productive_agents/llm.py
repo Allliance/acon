@@ -515,7 +515,10 @@ class vLLM(BaseLLMModel):
             # whenever the caller passes a stop sequence; the visible "Thought:"
             # rationale in the smolagents prompt still works.
             stop = kwargs.get("stop") or kwargs.get("stop_sequences")
-            enable_thinking = not bool(stop)
+            if "enable_thinking" in kwargs:
+                enable_thinking = bool(kwargs["enable_thinking"])
+            else:
+                enable_thinking = not bool(stop)
             options["extra_body"] = {
                 "presence_penalty": 0.5, # Default presence penalty
                 "chat_template_kwargs": {"enable_thinking": enable_thinking},

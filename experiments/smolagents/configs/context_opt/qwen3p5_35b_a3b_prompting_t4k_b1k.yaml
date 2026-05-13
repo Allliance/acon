@@ -1,0 +1,13 @@
+# Prompting baseline: Qwen3.5-35B-A3B compresses the history for the same agent.
+# Trigger threshold: 4096 tokens. Compressor budget: 1024 tokens.
+# Compressor endpoint resolved from VLLM_COMPRESSOR_BASE_URL at runtime.
+type: "history"
+model: "Qwen/Qwen3.5-35B-A3B"
+compressor_type: "full"
+prompts:
+  prompt_system: "system_prompt"
+  prompt_history_user: "prompt_history_v2"
+history_summarization_threshold: 4096
+compression_budget: 1024
+preserve_last_k_turns: 1
+history_summary_rule: "reset"

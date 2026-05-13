@@ -425,7 +425,19 @@ class MemoryManager:
                 if not history_text.strip():
                     return
                 
-                if not self.history_optimizer.check_summarization_needed(history_text, self.prev_history_summary):
+                # Include preserved turns + system/first_user in the budget
+                # check so we compress when the *total* prompt is growing, not
+                # just the older history. This catches cases where the last
+                # turn alone (e.g. a giant retrieval observation) is what's
+                # pushing the request toward the model's context window.
+                full_text_for_check = history_text
+                if preserved_turns:
+                    full_text_for_check += "\n" + self.convert_llm_history_to_text(preserved_turns)
+                if current_session and current_session[0].get("role") == "system":
+                    full_text_for_check += "\n" + current_session[0].get("content", "")
+                if len(current_session) > 1 and current_session[1].get("role") == "user":
+                    full_text_for_check += "\n" + current_session[1].get("content", "")
+                if not self.history_optimizer.check_summarization_needed(full_text_for_check, self.prev_history_summary):
                     # If history summarization is not needed, return without processing
                     return
                 

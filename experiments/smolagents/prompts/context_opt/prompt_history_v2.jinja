@@ -31,7 +31,7 @@ List completed subtasks or successful outcomes, with brief results if applicable
 3. Ensure agent can resume task with no loss of information.
 4. Include key info from errors or failed attempts to prevent repeated mistakes.
 5. Preserve all essential artifacts and data needed to complete the task.
-{% if budget %}6. **Hard length limit: your summary MUST be at most {{ budget }} tokens.** Drop the least-load-bearing details first; keep facts, IDs, and artifacts the agent needs to finish the task. Do not exceed the budget.
+{% if word_budget %}6. **Hard length limit: your summary MUST be at most {{ word_budget }} words.** Drop the least-load-bearing details first; keep facts, IDs, and artifacts the agent needs to finish the task. Do not exceed the limit.
 {% endif %}
 
 ---

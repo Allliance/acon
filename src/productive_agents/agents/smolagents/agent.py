@@ -5,7 +5,9 @@ This agent uses the unified agent framework to interact with the SmolagentsEnv.
 It builds simple prompts and extracts Python code from LLM responses.
 """
 
-from typing import Any, Dict, List, Optional
+import json
+import os
+from typing import Any, Dict, List, Optional, Tuple
 import re
 from jinja2 import Template
 
@@ -14,6 +16,116 @@ from productive_agents.agents.unified_agent import (
 	UnifiedPromptBuilder,
 	UnifiedActionProcessor,
 )
+from productive_agents.agents.utils import LLMOutput
+
+
+CAUSAL_GENERATION_INSTRUCTIONS = """
+
+# Causal recall reporting (REQUIRED)
+
+To help us understand the causal chain behind your decisions, **before** writing your 'Thought:' at each step, you must add a 'Recalls:' section that explicitly lists which earlier step(s) you are basing your current action on, and the exact piece of information from that step you are using.
+
+## Step numbering
+
+To make the recall step indices unambiguous, the conversation is annotated as follows:
+
+- Every assistant turn (your own previous actions) is prefixed with a header of the form:
+  `[Step N — your action]`
+  where N is the 1-indexed step number. Step 1 is your very first action, step 2 is your second, and so on.
+
+- Every observation turn (the result of executing your code) is prefixed with a header of the form:
+  `[Observation from step N]`
+  where N is the step whose code produced that observation. So `[Observation from step 3]` is what came back after your step-3 code ran.
+
+When you write a `<recall step="N">` tag, N must be one of the step indices you can literally see in the conversation above (in either an `[Step N — your action]` header or an `[Observation from step N]` header). Do NOT guess or recompute step numbers — read them off the headers.
+
+The header for *your current* (upcoming) action is NOT shown to you; you must infer it from the most recent header you can see. If the most recent assistant header above is `[Step K — your action]`, then you are about to write step K+1. If there is no assistant header yet, you are at step 1.
+
+## Format
+
+Use exactly these XML-like tags, one per recall:
+
+Recalls:
+<recall step="N">exact information from step N that you are using here</recall>
+<recall step="M">exact information from step M that you are using here</recall>
+
+If you are at step 1, or your current action does not depend on any earlier step, write:
+
+Recalls: (none)
+
+## Rules
+
+- The 'Recalls:' section must appear before the 'Thought:' section at every step.
+- Each <recall> tag refers to a single earlier step. If you are using information from multiple earlier steps, emit multiple <recall> tags.
+- Keep the information inside each <recall> tag concise (one short sentence or a short quoted phrase) but specific enough that a reader can identify exactly what you reused.
+- Do NOT cite the current step or future steps. Only cite strictly earlier steps.
+
+### IMPORTANT — cite NON-ADJACENT steps, not just the previous one
+
+We are specifically interested in long-range causal links. **Only emit `<recall>` tags that point to steps strictly before the immediately previous step.** In other words, the step number you cite must be at most (current_step − 2), never (current_step − 1).
+
+- A recall of the *immediately previous* step (i.e., step current_step − 1) is NOT useful and will be discarded. Do NOT bother emitting such recalls.
+- If the only step whose information you are using is the immediately previous one, write `Recalls: (none)` instead of citing it.
+- Actively scan the earlier history (step 1, step 2, …, step current_step − 2) for pieces of information that genuinely influence your current action — for example: a sub-answer you derived several steps ago, an observation from an earlier search whose content you are now combining with newer evidence, a decision or sub-plan you committed to earlier, or a hypothesis you formed and are now confirming or revising.
+- Whenever such a long-range dependency exists, surface it explicitly with a `<recall>` tag. Do not omit it just because you also implicitly used the previous step.
+
+## Worked example (illustrative only)
+
+Suppose the conversation shows:
+  [Step 1 — your action]: <searched populations of Shanghai and Guangzhou>
+  [Observation from step 1]: "Population Shanghai: 26 million (2019); Population Guangzhou: 15 million as of 2021"
+  [Step 2 — your action]: <decided to also search for Beijing for context>
+  [Observation from step 2]: "Population Beijing: 21 million (2020)"
+
+Then your step 3 should look like:
+
+Recalls:
+<recall step="1">"Population Shanghai: 26 million (2019)"</recall>
+<recall step="1">"Population Guangzhou: 15 million as of 2021"</recall>
+
+Thought: From step 1 I already have the populations I need; Shanghai is larger, so I will return Shanghai.
+```python
+final_answer("Shanghai")
+```
+
+Note how the recall above points back to step 1 (a non-adjacent step), not step 2 (the immediately previous step). We do not record recalls of the immediately previous step at all — they are filtered out. The whole point is to surface dependencies on *earlier* steps.
+
+A second example, with a longer trajectory:
+
+  [Step 1 — your action]: <searched: capital of France>
+  [Observation from step 1]: "Paris is the capital and most populous city of France."
+  [Step 2 — your action]: <searched: population of Paris>
+  [Observation from step 2]: "Paris has a population of about 2.1 million within the city limits."
+  [Step 3 — your action]: <searched: mayor of Paris>
+  [Observation from step 3]: "Anne Hidalgo is the mayor of Paris since 2014."
+  [Step 4 — your action]: <searched: capital of Germany>
+  [Observation from step 4]: "Berlin is the capital of Germany."
+  [Step 5 — your action]: <searched: population of Berlin>
+  [Observation from step 5]: "Berlin has a population of about 3.7 million."
+
+Then at step 6, when comparing the two capitals, you might write:
+
+Recalls:
+<recall step="1">"Paris is the capital ... of France"</recall>
+<recall step="2">"Paris has a population of about 2.1 million"</recall>
+<recall step="4">"Berlin is the capital of Germany"</recall>
+
+Thought: I now have both capitals and the Paris population from earlier, plus Berlin's population from the last step. Berlin (~3.7M) is more populous than Paris (~2.1M).
+```python
+final_answer("Berlin")
+```
+
+Notice we cite steps 1, 2, and 4 — all non-adjacent — but we do NOT cite step 5 even though its observation is used, because step 5 is the immediately previous step.
+"""
+
+
+# Regex to extract <recall step="N">info</recall> tags
+_RECALL_TAG_RE = re.compile(
+	r"<recall\s+step\s*=\s*['\"]?(\d+)['\"]?\s*>(.*?)</recall>",
+	re.DOTALL | re.IGNORECASE,
+)
+# Regex used to scrub the recalls section from the stored response.
+_RECALLS_HEADER_RE = re.compile(r"^[ \t]*Recalls:[ \t]*(\(none\))?[ \t]*\n?", re.MULTILINE | re.IGNORECASE)
 
 
 DEFAULT_SYSTEM_PROMPT = """You are an expert assistant who can solve any task using code blobs. You will be given a task to solve as best you can.
@@ -256,17 +368,99 @@ class SmolagentsActionProcessor(UnifiedActionProcessor):
 class SmolagentsAgent(UnifiedAgent):
 	"""Minimal agent for the Smolagents environment."""
 	def __init__(self, model_name: str, key: str, env, task_config: Dict[str, Any], **kwargs):
+		# Determine causal-generation mode *before* super().__init__, because the
+		# system message is built inside super().__init__ and we want to optionally
+		# append the causal-recall instructions to it.
+		exp_config = kwargs.get("exp_config")
+		self.causal_generation = bool(getattr(exp_config, "causal_generation", False)) if exp_config is not None else False
+		self._sample_id = task_config.get("task_id") if isinstance(task_config, dict) else None
+		self._causal_step_counter = 0
+		self._causal_pairs: List[Tuple[Any, int, int, str]] = []
+
 		super().__init__(model_name=model_name, key=key, env=env, task_config=task_config, **kwargs)
 		self.stop_sequences = ["Observation:", "Calling tools:"]
-		
+
 	def _create_prompt_builder(self) -> SmolagentsPromptBuilder:
-		return SmolagentsPromptBuilder(DEFAULT_PROMPT_DICT.copy(), env=self.env)
+		prompt_dict = DEFAULT_PROMPT_DICT.copy()
+		if self.causal_generation:
+			prompt_dict["system_message"] = prompt_dict["system_message"] + CAUSAL_GENERATION_INSTRUCTIONS
+		return SmolagentsPromptBuilder(prompt_dict, env=self.env)
 
 	def _create_action_processor(self) -> SmolagentsActionProcessor:
 		return SmolagentsActionProcessor(self.logger)
 
 	def _process_response(self, response: str) -> str:
 		return self.action_processor.extract_action(response)
+
+	def build_prompt(self, env) -> str:
+		"""Inject an [Observation from step N] header into observation turns when causal mode is on."""
+		base = super().build_prompt(env)
+		if not self.causal_generation:
+			return base
+		# Only label *observations* (i.e. when there is already a trajectory);
+		# the initial task prompt is left unlabeled — it is not a step.
+		if getattr(env, "trajectory", None) and len(env.trajectory) > 0:
+			# By the time build_prompt runs for step N+1, the step counter
+			# (incremented inside forward()) already equals N, the step whose
+			# code produced this observation.
+			obs_step = self._causal_step_counter
+			return f"[Observation from step {obs_step}]\n{base}"
+		return base
+
+	def forward(self, prompt) -> LLMOutput:
+		"""Wrap base forward() to extract/strip causal recalls when enabled."""
+		if not self.causal_generation:
+			return super().forward(prompt)
+
+		llm_output = super().forward(prompt)
+		raw_response = llm_output.response or ""
+		self._causal_step_counter += 1
+		posterior_step = self._causal_step_counter
+
+		try:
+			recalls = _RECALL_TAG_RE.findall(raw_response)
+		except Exception:
+			recalls = []
+
+		for step_str, info in recalls:
+			try:
+				prior_step = int(step_str)
+			except (TypeError, ValueError):
+				continue
+			# Only keep recalls that reference strictly earlier steps, and
+			# drop adjacent (delta=1) recalls — those tend to be "I just used
+			# the previous observation" and are not informative as causal links.
+			if prior_step <= 0 or prior_step >= posterior_step - 1:
+				continue
+			info_clean = (info or "").strip()
+			if not info_clean:
+				continue
+			self._causal_pairs.append((self._sample_id, posterior_step, prior_step, info_clean))
+
+		# Prepend an explicit step header to the response we store, so that on
+		# the *next* turn the model can read off `[Step N — your action]` from
+		# the conversation and recall by absolute index instead of guessing.
+		# Recalls live OUTSIDE the python code block, so the extracted action is
+		# already free of them — the env trajectory therefore never contains
+		# recall tags. We deliberately keep the raw response (including the
+		# recalls) in the assistant turn so it shows up in trajectory.txt and
+		# llm_history.json for inspection.
+		annotated = f"[Step {posterior_step} — your action]\n{raw_response}"
+		llm_output.response = annotated
+		return llm_output
+
+	def dump_causal_pairs(self, output_dir: str) -> None:
+		"""Persist accumulated causal recall pairs to causal_pairs.json.
+
+		No-op when causal generation mode is disabled or no pairs were captured.
+		"""
+		if not self.causal_generation:
+			return
+		os.makedirs(output_dir, exist_ok=True)
+		path = os.path.join(output_dir, "causal_pairs.json")
+		serializable = [list(p) for p in self._causal_pairs]
+		with open(path, "w", encoding="utf-8") as f:
+			json.dump(serializable, f, indent=2, ensure_ascii=False)
 
 	def _determine_success(self, env, reward: float, info: Dict) -> bool:
 		if hasattr(env, "task_completed") and callable(env.task_completed):

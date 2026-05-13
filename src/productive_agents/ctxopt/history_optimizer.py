@@ -139,8 +139,19 @@ class HistoryOptimizer(BaseContextOptimizer):
                 _history = history
             raw_response = self.llmlingua_compress_context(_history, ratio=0.2)
         else:
-            raw_response = self.llm.generate(prompt, temperature=self.temperature)
-            raw_response = raw_response.strip()
+            # Fixed 4096-token decode cap leaves room for Qwen3-style thinking
+            # plus the bounded summary.
+            raw_response = self.llm.generate(
+                prompt, temperature=self.temperature, max_tokens=4096
+            )
+            raw_response = (raw_response or "").strip()
+            # Hard-truncate the produced summary to the configured token budget
+            # so downstream history never exceeds it, regardless of whether
+            # the model honored the word-count instruction in the prompt.
+            if self.compression_budget and raw_response and self.tokenizer is not None:
+                tokens = self.tokenizer.encode(raw_response)
+                if len(tokens) > self.compression_budget:
+                    raw_response = self.tokenizer.decode(tokens[: self.compression_budget])
         
         # Save interaction to history
         self.add_to_history(self.system_message, prompt, raw_response, prompt_args)
@@ -209,8 +220,12 @@ class HistoryOptimizer(BaseContextOptimizer):
         # Full mode: include all history
         prompt_args["history"] = history
         # Surface the compression budget to the template so the compressor
-        # can target it. Rendered conditionally in the Jinja template.
+        # can target it. `word_budget` is the user-facing limit injected into
+        # the prompt (set to half the token budget so the realized output fits
+        # comfortably under the token cap). Rendered conditionally in Jinja.
         prompt_args["budget"] = self.compression_budget
+        if self.compression_budget:
+            prompt_args["word_budget"] = max(1, int(self.compression_budget) // 2)
         template_name = self.history_template
 
         # Render the prompt

@@ -9,10 +9,12 @@ Minimal Smolagents + MuSiQue runner
 
 import json
 import os
+import shutil
+import time
 import yaml
 from dataclasses import asdict
 from types import SimpleNamespace
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 from eval_utils import exact_match, f1_max
 
@@ -46,6 +48,7 @@ def run_sample(
     model_ctxopt: Optional[Any] = None,
     co_config: Optional[Dict[str, Any]] = None,
     experiment_name: str = "smolagents_musique",
+    causal_generation: bool = False,
 ):
     os.makedirs(output_base, exist_ok=True)
 
@@ -65,6 +68,7 @@ def run_sample(
         debug_mode=debug,
         max_iter=max_iter,
         co_config=co_config,
+        causal_generation=causal_generation,
     )
 
     task_cfg = {
@@ -103,6 +107,10 @@ def run_sample(
     # Save histories
     agent.dump_history(sample_dir)
     env.dump_history(sample_dir)
+
+    # Causal generation: persist the (sample_id, posterior_step, prior_step, info) tuples.
+    if causal_generation and hasattr(agent, "dump_causal_pairs"):
+        agent.dump_causal_pairs(sample_dir)
 
     # Write human-readable trajectory log
     _dump_trajectory_text(
@@ -180,6 +188,8 @@ def main(
     data_folder: Optional[str] = None,
     co_config_path: Optional[str] = None,
     id_list_file: Optional[str] = None,
+    num_workers: int = 1,
+    causal_generation: bool = False,
 ):
     # Resolve dataset path from split/data_folder if provided.
     # Desired: choose file by split (train/test), reading from data_folder.
@@ -272,12 +282,68 @@ def main(
     output_dir = os.path.join(outputs_root, f"{model_part}_{tag_part}", split_part)
     os.makedirs(output_dir, exist_ok=True)
 
+    # Copy the context-optimization config into the output dir for later reference.
+    if co_config_path and os.path.exists(co_config_path):
+        try:
+            shutil.copy2(co_config_path, os.path.join(output_dir, os.path.basename(co_config_path)))
+        except Exception as e:
+            print(f"Warning: failed to copy co_config to output dir: {e}")
+
+    # File logger: writes timestamped progress lines to {output_dir}/eval.log
+    log_path = os.path.join(output_dir, "eval.log")
+    log_fh = open(log_path, "a", buffering=1, encoding="utf-8")
+
+    def _log(msg: str) -> None:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_fh.write(f"[{ts}] {msg}\n")
+
     experiment_name = f"smolagents_musique_{split_part}" + (f"_{tag_part}" if tag_part else "")
 
     n = 0
     correct = 0
     f1_sum = 0.0
     all_rows = []
+
+    def _score_and_record(ex, pred_raw, result):
+        pred = [p.strip() for p in (pred_raw or "").split(";")]
+        em_list = [exact_match(_pred, _answer) for _pred, _answer in zip(pred, ex.answer)]
+        f1_list = [f1_max(_pred, _answer) for _pred, _answer in zip(pred, ex.answer)]
+        em_score = sum(em_list) / len(ex.answer)
+        f1_score = sum(f1_list) / len(ex.answer)
+        row = {
+            "id": ex.id,
+            "question": ex.question,
+            "answer": ex.answer,
+            "prediction": pred,
+            "em": em_score,
+            "f1": f1_score,
+            "iterations": result.get("iterations", 0) if result else 0,
+            "success": result.get("success", False) if result else False,
+        }
+        return em_score, f1_score, row
+
+    def _run_one(ex):
+        try:
+            pred_raw, result = run_sample(
+                ex=ex,
+                model_name=model_name,
+                max_iter=max_iter,
+                debug=debug,
+                output_base=os.path.join(output_dir, "samples"),
+                lora_name=lora_name,
+                model_ctxopt=model_ctxopt,
+                co_config=co_config,
+                experiment_name=experiment_name,
+                causal_generation=causal_generation,
+            )
+            return ex, pred_raw, result, None
+        except Exception as e:  # keep one bad sample from killing the whole run
+            return ex, "", {}, e
+
+    _log(f"Starting run: model={model_name} tag={tag} split={split_part} "
+         f"total={total_count} num_workers={num_workers} max_iter={max_iter} "
+         f"co_config={co_config_path}")
+    start_ts = time.time()
 
     # Progress bar with elapsed and ETA
     with Progress(
@@ -291,45 +357,69 @@ def main(
     ) as progress:
         task_id = progress.add_task("Running MuSiQue", total=total_count)
         try:
-            for ex in iterator:
-                pred, result = run_sample(
-                    ex=ex,
-                    model_name=model_name,
-                    max_iter=max_iter,
-                    debug=debug,
-                    output_base=os.path.join(output_dir, "samples"),
-                    lora_name=lora_name,
-                    model_ctxopt=model_ctxopt,
-                    co_config=co_config,
-                    experiment_name=experiment_name,
-                )
-
-                pred = [p.strip() for p in pred.split(";")]
-                # each _answer is the list
-                em_list = [exact_match(_pred, _answer) for _pred, _answer in zip(pred, ex.answer)]
-                f1_list = [f1_max(_pred, _answer) for _pred, _answer in zip(pred, ex.answer)]
-
-                em_score = sum(em_list) / len(ex.answer)
-                f1_score = sum(f1_list) / len(ex.answer)
-
-                correct += em_score
-                f1_sum += f1_score
-                n += 1
-                all_rows.append({
-                    "id": ex.id,
-                    "question": ex.question,
-                    "answer": ex.answer,
-                    "prediction": pred,
-                    "em": em_score,
-                    "f1": f1_score,
-                    "iterations": result.get("iterations", 0),
-                    "success": result.get("success", False),
-                })
-
-                # advance progress
-                progress.advance(task_id, 1)
+            if num_workers and num_workers > 1:
+                # Parallel execution: each sample is independent (own env, agent,
+                # MemoryManager). vLLM clients are thread-safe HTTP wrappers.
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                # Materialize iterator so ThreadPoolExecutor can submit all upfront.
+                examples = list(iterator)
+                if total_count is None:
+                    total_count = len(examples)
+                    progress.update(task_id, total=total_count)
+                with ThreadPoolExecutor(max_workers=num_workers) as pool:
+                    futures = [pool.submit(_run_one, ex) for ex in examples]
+                    for fut in as_completed(futures):
+                        ex, pred_raw, result, err = fut.result()
+                        if err is not None:
+                            progress.console.print(f"[red]Sample {ex.id} failed: {err}")
+                            _log(f"Sample {ex.id} FAILED: {err}")
+                        em_score, f1_score, row = _score_and_record(ex, pred_raw, result)
+                        correct += em_score
+                        f1_sum += f1_score
+                        n += 1
+                        all_rows.append(row)
+                        progress.advance(task_id, 1)
+                        elapsed = time.time() - start_ts
+                        rate = n / elapsed if elapsed > 0 else 0.0
+                        remaining = (total_count - n) / rate if rate > 0 and total_count else 0
+                        _log(
+                            f"[{n}/{total_count}] id={ex.id} em={em_score:.2f} f1={f1_score:.2f} "
+                            f"iters={row['iterations']} | "
+                            f"running_em={correct/n:.3f} running_f1={f1_sum/n:.3f} | "
+                            f"elapsed={timedelta(seconds=int(elapsed))} eta={timedelta(seconds=int(remaining))}"
+                        )
+            else:
+                for ex in iterator:
+                    pred_raw, result = run_sample(
+                        ex=ex,
+                        model_name=model_name,
+                        max_iter=max_iter,
+                        debug=debug,
+                        output_base=os.path.join(output_dir, "samples"),
+                        lora_name=lora_name,
+                        model_ctxopt=model_ctxopt,
+                        co_config=co_config,
+                        experiment_name=experiment_name,
+                        causal_generation=causal_generation,
+                    )
+                    em_score, f1_score, row = _score_and_record(ex, pred_raw, result)
+                    correct += em_score
+                    f1_sum += f1_score
+                    n += 1
+                    all_rows.append(row)
+                    progress.advance(task_id, 1)
+                    elapsed = time.time() - start_ts
+                    rate = n / elapsed if elapsed > 0 else 0.0
+                    remaining = (total_count - n) / rate if rate > 0 and total_count else 0
+                    _log(
+                        f"[{n}/{total_count}] id={ex.id} em={em_score:.2f} f1={f1_score:.2f} "
+                        f"iters={row['iterations']} | "
+                        f"running_em={correct/n:.3f} running_f1={f1_sum/n:.3f} | "
+                        f"elapsed={timedelta(seconds=int(elapsed))} eta={timedelta(seconds=int(remaining))}"
+                    )
         except KeyboardInterrupt:
             progress.console.print("\nInterrupted by user (Ctrl+C). Finishing up...")
+            _log("Interrupted by user (Ctrl+C).")
 
     summary = {
         "total": n,
@@ -345,6 +435,14 @@ def main(
         "co_config_path": co_config_path,
         "id_list_file": id_list_file,
     }
+
+    total_elapsed = time.time() - start_ts
+    _log(
+        f"Run complete: total={n} em={summary['avg_em']:.4f} f1={summary['avg_f1']:.4f} "
+        f"wall_time={timedelta(seconds=int(total_elapsed))}"
+    )
+    log_fh.close()
+    summary["wall_time_seconds"] = total_elapsed
 
     with open(os.path.join(output_dir, "summary.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
@@ -398,6 +496,13 @@ if __name__ == "__main__":
     )
     parser.add_argument("--co_config_path", type=str, default=None, help="Context optimization config file path")
     parser.add_argument("--id_list_file", type=str, default=None, help="Optional file containing example IDs (one per line) to restrict the run")
+    parser.add_argument("--num_workers", type=int, default=128, help="Parallel sample workers (threads). Each runs one sample independently against the same vLLM endpoint.")
+    parser.add_argument(
+        "--causal_generation",
+        action="store_true",
+        help="Enable causal generation mode: agent emits per-step recall tags citing earlier steps; "
+             "tags are stripped from stored history and persisted as causal_pairs.json per sample.",
+    )
 
     args = parser.parse_args()
 
@@ -413,4 +518,6 @@ if __name__ == "__main__":
         data_folder=args.data_folder,
         co_config_path=args.co_config_path,
         id_list_file=args.id_list_file,
+        num_workers=args.num_workers,
+        causal_generation=args.causal_generation,
     )

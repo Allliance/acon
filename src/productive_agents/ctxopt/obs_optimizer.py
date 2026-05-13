@@ -110,7 +110,7 @@ class ObservationOptimizer(BaseContextOptimizer):
             raw_response = self.llmlingua_compress_context(observation, ratio=0.3)
         else:
             raw_response = self.llm.generate(prompt)
-            raw_response = raw_response.strip()
+            raw_response = (raw_response or "").strip()
         
         # Save interaction to history
         self.add_to_history(self.system_message, prompt, raw_response, prompt_args)
