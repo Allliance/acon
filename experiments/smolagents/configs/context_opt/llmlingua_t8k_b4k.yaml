@@ -1,0 +1,15 @@
+# LLMLingua-2 baseline: compresses history via an HTTP endpoint.
+# Threshold: 8192 tokens. Budget: 4096 tokens.
+# Server endpoint resolved from LLMLINGUA_BASE_URL at runtime
+# (default http://localhost:9999).
+type: "history"
+model: "none"
+compressor_type: "full"
+prompts:
+  prompt_system: "system_prompt"
+  prompt_history_user: "prompt_history_v2"
+history_summarization_threshold: 8192
+compression_budget: 4096
+preserve_last_k_turns: 1
+history_summary_rule: "reset"
+use_llmlingua: True

@@ -1,4 +1,5 @@
 experiments/smolagents/logs
+experiments/appworld/logs
 .claude/
 
 ## Ignore Visual Studio temporary files, build results, and
@@ -459,6 +460,8 @@ experiments/analysis_tools/dashboards
 experiments/analysis_tools/figures
 experiments/analysis_tools/tables
 experiments/smolagents/outputs
+experiments/smolagents/compressor_eval_data
+experiments/smolagents/compressors_generations
 experiments/smolagents/search/database
 experiments/training/dataset
 experiments/training/notebook

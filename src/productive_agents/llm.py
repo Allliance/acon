@@ -488,6 +488,7 @@ class vLLM(BaseLLMModel):
         self.client = OpenAI(
             base_url=resolved,
             api_key="token-abc",
+            max_retries=5,
         )
         self.lora_name = lora_name
         if self.lora_name and "=" in self.lora_name:

@@ -47,42 +47,48 @@ Tune `compression_budget` (tokens) in the config to vary the budget.
 
 ## How to run
 
+All baselines go through the single unified `./launch.sh`. It auto-detects
+running vLLM / retriever servers on ports 8000–8010, or pin endpoints with
+`--vllm-url` / `--compressor-url` / `--retriever-url`. See `launch.sh` header
+for full docs.
+
+Defaults baked into the output tag: `t8k_b4k_w128` (threshold 8192 tokens,
+budget 4096 tokens, 128 workers). Override with run.py's
+`--history_threshold` / `--compression_budget` / `--num_workers`.
+
 ### Selection-based (no compressor LLM)
 
 ```bash
-COMPRESSOR_MODEL="" \
-  ./launch_eval_with_compressor.sh \
-    --co_config_path configs/context_opt/fifo_budget2048.yaml \
-    --split test --tag fifo_b2048
+./launch.sh -- --co_config_path configs/context_opt/fifo_t8k_b4k.yaml --tag fifo
 ```
 
 ### Prompting baseline (separate compressor vLLM)
 
 ```bash
-MODEL="Qwen/Qwen3.5-35B-A3B" \
-COMPRESSOR_MODEL="Qwen/Qwen3.5-9B" \
-  ./launch_eval_with_compressor.sh \
-    --co_config_path configs/context_opt/qwen3.5-9b_history.yaml \
-    --split test --tag qwen9b_compressor
+./launch.sh --compressor-model Qwen/Qwen3.5-9B \
+    -- --co_config_path configs/context_opt/qwen3p5_9b_prompting_t8k_b4k.yaml --tag qwen9b
 ```
 
 ### Same model for agent and compressor (single vLLM server)
 
+Point the compressor URL at the agent URL — no second server is launched:
+
 ```bash
-# Don't start a second vLLM. Point the compressor port at the agent port.
-COMPRESSOR_MODEL="" \
-VLLM_COMPRESSOR_PORT="${VLLM_PORT}" \
-  ./launch_eval_with_compressor.sh \
-    --co_config_path configs/context_opt/qwen3.5-35b-a3b_history.yaml \
-    --split test --tag qwen35b_compressor
+./launch.sh --compressor-url http://localhost:8000 \
+    -- --co_config_path configs/context_opt/qwen3p5_35b_a3b_prompting.yaml --tag qwen35b
 ```
 
 ### GPT-4.1 baseline (OpenAI API, no second vLLM)
 
 ```bash
-./launch_eval.sh \
-    --co_config_path configs/context_opt/gpt-4.1_history.yaml \
-    --split test --tag gpt4.1_compressor
+./launch.sh -- --co_config_path configs/context_opt/gpt-4.1-mini_t8k_b4k.yaml --tag gpt41mini
+```
+
+### Reuse a remote vLLM
+
+```bash
+./launch.sh --vllm-url r818u33n08:8000 \
+    -- --co_config_path configs/context_opt/fifo_t8k_b4k.yaml --tag fifo
 ```
 
 ## How the compressor port is resolved

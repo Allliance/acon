@@ -507,17 +507,31 @@ class MemoryManager:
                 preserved_turns = selected + preserved_turns
                 user_prompt = current_session[1]['content']
             elif self.baseline_strategy == "retrieve":
-                # check the size of preserved turns
-                # retrieve k turns from the current session
-                # only works there are more sessions than k
+                # Retrieve the most-similar prior turns. When compression_budget
+                # is set, keep as many top-similarity pairs as fit in budget;
+                # otherwise fall back to a fixed retrieve_turns count.
                 history_for_summarization = self.entire_session[2:max(2, len(self.entire_session) - len(preserved_turns))]
-                if len(history_for_summarization) < self.retrieve_turns * 2:
-                    return
                 last_turn = self.entire_session[-2:]
-                retrieved_turns = self.history_optimizer.retrieve(history_for_summarization, last_turn, self.retrieve_turns)
+                if self.compression_budget:
+                    if self.history_optimizer is not None:
+                        count_tokens = self.history_optimizer.count_tokens
+                    else:
+                        count_tokens = lambda s: max(1, len(s) // 4) if s else 0
+                    retrieved_turns = self.history_optimizer.retrieve(
+                        history_for_summarization,
+                        last_turn,
+                        budget=self.compression_budget,
+                        count_tokens=count_tokens,
+                    )
+                else:
+                    if len(history_for_summarization) < self.retrieve_turns * 2:
+                        return
+                    retrieved_turns = self.history_optimizer.retrieve(
+                        history_for_summarization, last_turn, self.retrieve_turns
+                    )
 
                 optimized_history = ''
-                preserved_turns = retrieved_turns + preserved_turns                
+                preserved_turns = retrieved_turns + preserved_turns
                 user_prompt = current_session[1]['content']
             else:
                 raise NotImplementedError(f"Unknown baseline strategy: {self.baseline_strategy}")

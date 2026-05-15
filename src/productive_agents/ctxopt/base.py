@@ -211,6 +211,9 @@ class BaseContextOptimizer(ABC):
         return history_text.strip()
     
     def llmlingua_compress_context(self, prompt, ratio=0.33):
-        r = requests.post("http://localhost:9999/compress", json={"prompt": prompt, "rate": ratio})
+        base_url = os.environ.get("LLMLINGUA_BASE_URL", "http://localhost:9999").rstrip("/")
+        if not base_url.startswith("http"):
+            base_url = f"http://{base_url}"
+        r = requests.post(f"{base_url}/compress", json={"prompt": prompt, "rate": ratio}, timeout=600)
         r.raise_for_status()
-        return r.json()["compressed_prompt"]    
+        return r.json()["compressed_prompt"]

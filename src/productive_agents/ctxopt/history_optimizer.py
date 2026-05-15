@@ -83,14 +83,16 @@ class HistoryOptimizer(BaseContextOptimizer):
         # within that size.
         self.compression_budget = config.get("compression_budget", None)
 
+        self.use_llmlingua = config.get("use_llmlingua", False)
+
         if llm:
             self.llm = llm
             # assign the system message to the llm
         else:
-            # Skip LLM init for pure-selection baselines (fifo/mask/random) which
-            # never call .generate(). This avoids needing a vLLM server for them.
+            # Skip LLM init for pure-selection baselines (fifo/mask/random) and
+            # for LLMLingua (served via its own HTTP endpoint).
             baseline_strategy = config.get("baseline_strategy", "none")
-            if baseline_strategy in {"fifo", "mask_obs", "mask_action", "random"}:
+            if baseline_strategy in {"fifo", "mask_obs", "mask_action", "random", "retrieve"} or self.use_llmlingua:
                 self.llm = None
             else:
                 # Lazy import to avoid circular import with agents during module import
@@ -101,8 +103,6 @@ class HistoryOptimizer(BaseContextOptimizer):
                     base_url=self.compressor_base_url,
                 )
 
-        self.use_llmlingua = config.get("use_llmlingua", False)
-        
     def process(
         self, 
         task: str, 
@@ -133,11 +133,24 @@ class HistoryOptimizer(BaseContextOptimizer):
         #     cprint("History Optimization Prompt", 'red')
         #     cprint(prompt, 'blue')
         if self.use_llmlingua:
+            # Flatten the (possibly summarized + tail) message list into text and
+            # ask LLMLingua to compress it down to ~compression_budget tokens.
             if prev_history_summary:
-                _history = prev_history_summary + history
+                _history_text = f"<PREVIOUS_SUMMARY>\n{prev_history_summary}\n</PREVIOUS_SUMMARY>\n\n"
+                _history_text += self.convert_llm_history_to_text(history)
             else:
-                _history = history
-            raw_response = self.llmlingua_compress_context(_history, ratio=0.2)
+                _history_text = self.convert_llm_history_to_text(history)
+            input_tokens = self.count_tokens(_history_text)
+            if self.compression_budget and input_tokens > 0:
+                ratio = max(0.05, min(0.95, self.compression_budget / max(input_tokens, 1)))
+            else:
+                ratio = 0.2
+            raw_response = self.llmlingua_compress_context(_history_text, ratio=ratio)
+            raw_response = (raw_response or "").strip()
+            if self.compression_budget and raw_response and self.tokenizer is not None:
+                tokens = self.tokenizer.encode(raw_response)
+                if len(tokens) > self.compression_budget:
+                    raw_response = self.tokenizer.decode(tokens[: self.compression_budget])
         else:
             # Fixed 4096-token decode cap leaves room for Qwen3-style thinking
             # plus the bounded summary.
@@ -429,42 +442,58 @@ class HistoryRetriever(HistoryOptimizer):
                 history_text = ""
         return history_text_list
 
-    def retrieve(self, history: List, last_turn: List, n_turns: int) -> List:
+    def retrieve(
+        self,
+        history: List,
+        last_turn: List,
+        n_turns: Optional[int] = None,
+        budget: Optional[int] = None,
+        count_tokens: Optional[Any] = None,
+    ) -> List:
         """
-        Retrieve the most relevant n_turns from the history.
-        
-        Args:
-            history: The history of agent actions and observations
-            n_turns: Number of turns to retrieve
-            
-        Returns:
-            List of retrieved turns
+        Retrieve relevant turns from the history.
+
+        Either `n_turns` (fixed count) or `budget` (max tokens of retrieved
+        turns) must be provided. When `budget` is set, walk turns in descending
+        similarity order and keep each whose pair fits in the remaining budget.
         """
         query = self.convert_to_text(last_turn)[0]
         history_text_list = self.convert_to_text(history)
         if len(history_text_list) > len(self.embedding_cache):
             history_text_list_to_embed = history_text_list[len(self.embedding_cache):]
-            new_embeddings = self.embedding_model.embed_documents(history_text_list_to_embed)            
+            new_embeddings = self.embedding_model.embed_documents(history_text_list_to_embed)
             self.embedding_cache.extend(new_embeddings)
-        # print("#######  Len of embedding cache:", len(self.embedding_cache))
         query_embedding = self.embedding_model.embed_query(query)
 
-        # similarity search
         similarities = cosine_similarity(
-            [query_embedding], 
+            [query_embedding],
             np.array(self.embedding_cache)
         )[0]
-        # Get the indices of the top n_turns most similar entries
-        top_indices = np.argsort(similarities)[-n_turns:][::-1]
-        # sort top indices in increasing order
-        top_indices = sorted(top_indices.tolist())
+
+        if budget is not None:
+            if count_tokens is None:
+                count_tokens = self.count_tokens
+            ranked = np.argsort(similarities)[::-1].tolist()
+            chosen: List[int] = []
+            used = 0
+            for idx in ranked:
+                if 2 * idx + 1 >= len(history):
+                    continue
+                pair_cost = count_tokens(history[2 * idx].get("content", "")) \
+                    + count_tokens(history[2 * idx + 1].get("content", ""))
+                if used + pair_cost > budget:
+                    continue
+                chosen.append(idx)
+                used += pair_cost
+            top_indices = sorted(chosen)
+        else:
+            top_indices = sorted(np.argsort(similarities)[-n_turns:][::-1].tolist())
+
         print(f"Retrieved turns indices: {top_indices}")
-        # Retrieve the corresponding history entries
         retrieved_turns = []
         for i in top_indices:
-            retrieved_turns.append(history[i*2])
-            retrieved_turns.append(history[i*2+1])
-        # Just return the last n_turns for simplicity
+            retrieved_turns.append(history[i * 2])
+            retrieved_turns.append(history[i * 2 + 1])
         return retrieved_turns
 
     def dump_history(self, output_dir: str):
