@@ -1,0 +1,12 @@
+# ACON baseline: discard older turns, keep only the last k turns verbatim.
+# No LLM is loaded for this baseline.
+type: "history"
+model: "none"
+compressor_type: "full"
+prompts:
+  prompt_system: "system_prompt"
+  prompt_history_user: "prompt_history_v2"
+history_summarization_threshold: 8192
+baseline_strategy: "discard"
+preserve_last_k_turns: 5
+history_summary_rule: "reset"
