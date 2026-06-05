@@ -1,0 +1,18 @@
+# Trajectory-divergence baseline: full-mode (non-recurrent) history summary.
+# Re-summarizes the WHOLE past prefix (segments 0..i-1) at every boundary;
+# the recent segment S_i is kept verbatim by the divergence pipeline.
+#   * compressor model : Qwen/Qwen3.5-35B-A3B
+#   * prompt           : compression_prompt_ut
+#   * budget           : 2048 tokens
+# Compressor endpoint is supplied at run time (--*_base_url); not hard-coded.
+type: "history"
+model: "Qwen/Qwen3.5-35B-A3B"
+compressor_type: "full"
+summary_mode: "full"
+prompts:
+  prompt_system: "system_prompt"
+  prompt_history_user: "compression_prompt_ut"
+history_summarization_threshold: 6144
+compression_budget: 2048
+preserve_last_k_turns: 0
+history_summary_rule: "reset"

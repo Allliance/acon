@@ -1,0 +1,18 @@
+# Trajectory-divergence baseline: full-mode (non-recurrent) history summary.
+# Re-summarizes the WHOLE past prefix (segments 0..i-1) at every boundary;
+# the recent segment S_i is kept verbatim by the divergence pipeline.
+#   * compressor model : openai/gpt-oss-120b  (gpt-oss routes to vLLM, not OpenAI)
+#   * prompt           : prompt_history_v2
+#   * budget           : 2048 tokens
+# Compressor endpoint is supplied at run time (--base_*); not hard-coded.
+type: "history"
+model: "openai/gpt-oss-120b"
+compressor_type: "full"
+summary_mode: "full"
+prompts:
+  prompt_system: "system_prompt"
+  prompt_history_user: "prompt_history_v2"
+history_summarization_threshold: 6144
+compression_budget: 2048
+preserve_last_k_turns: 0
+history_summary_rule: "reset"
