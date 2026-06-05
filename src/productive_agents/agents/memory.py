@@ -1,6 +1,9 @@
 # Managing all memory features
 import os
+import sys
 import json
+import logging
+from copy import deepcopy
 from typing import List, Dict, Any, Optional, Union
 from productive_agents.ctxopt.obs_optimizer import ObservationOptimizer
 from productive_agents.ctxopt.history_optimizer import HistoryOptimizer
@@ -29,6 +32,10 @@ class MemoryManager:
         self.history_optimizer = None
         self.do_history_optimization = False
         self.prev_history_summary = None
+        # One entry per compression event: the exact session that replaces the
+        # old history (system + rebuilt user prompt + preserved/selected turns),
+        # with per-message and total token counts so the budget is verifiable.
+        self.post_compression_snapshots: List[Dict[str, Any]] = []
         self.preserve_last_k_turns = co_config.get("preserve_last_k_turns", 1) \
             if co_config else 1  # Number of turns to preserve without summarization
 
@@ -96,6 +103,192 @@ class MemoryManager:
                 self.do_history_optimization = True
             else:
                 raise ValueError(f"Unknown context optimization type: {co_type}")
+
+        # ---- Best-of-N compression selection (online divergence / rubric) ----
+        # When co_config has `compression_selection.enabled`, each LLM-history
+        # compression generates N candidate summaries and installs the one that
+        # least perturbs the agent's near-future plan (or scores highest on a
+        # rubric). Only meaningful for the LLM-summary path (baseline_strategy
+        # == "none"); selection baselines (fifo/random/...) are untouched.
+        self.compression_selection_cfg = (
+            co_config.get("compression_selection") if co_config else None
+        )
+        self.compression_selector = None
+        self.compression_selection_log: List[Dict[str, Any]] = []
+        self.n_candidates = 0
+        self.candidate_temperature = 0.6
+        self.candidate_seed = 0
+        if (
+            self.compression_selection_cfg
+            and self.compression_selection_cfg.get("enabled")
+            and self.do_history_optimization
+            and self.history_optimizer is not None
+            and self.baseline_strategy == "none"
+        ):
+            self._init_compression_selector(config, co_config)
+
+    def _init_compression_selector(self, config: Any, co_config: Dict[str, Any]) -> None:
+        """Build a CompressionSelector from `co_config['compression_selection']`.
+
+        Resolves the agent endpoint/model (for divergence plan forecasting) from
+        the selection config, then the agent config, then the environment. Any
+        failure (missing judge key, unreachable endpoint at import time, etc.)
+        disables selection with a warning rather than crashing the run — the
+        optimizer then falls back to a single compression.
+        """
+        cfg = self.compression_selection_cfg
+        logger = logging.getLogger(__name__)
+        try:
+            # The divergence package lives under experiments/<bench>/ which is
+            # the agent's cwd at run time; make sure it is importable.
+            cwd = os.getcwd()
+            if cwd not in sys.path:
+                sys.path.insert(0, cwd)
+            from divergence.online_selection import CompressionSelector
+
+            scorer = cfg.get("scorer", "divergence")
+            agent_model = (
+                cfg.get("agent_model")
+                or getattr(config, "model_name", None)
+                or os.environ.get("MODEL_NAME")
+            )
+            agent_base_url = (
+                cfg.get("agent_base_url")
+                or os.environ.get("VLLM_BASE_URL")
+            )
+            self.n_candidates = int(cfg.get("n_candidates", 5))
+            self.candidate_temperature = float(cfg.get("candidate_temperature", 0.6))
+            self.candidate_seed = int(cfg.get("candidate_seed", 0))
+
+            self.compression_selector = CompressionSelector(
+                agent_base_url=agent_base_url,
+                agent_model=agent_model,
+                scorer=scorer,
+                n_actions=int(cfg.get("n_actions", 5)),
+                max_gen_tokens=int(cfg.get("max_gen_tokens", 2048)),
+                agent_temperature=float(cfg.get("agent_temperature", 0.0)),
+                agent_enable_thinking=bool(cfg.get("agent_enable_thinking", False)),
+                judge_model=cfg.get("judge_model", "gemini-3.5-flash"),
+                judge_thinking_budget=cfg.get("judge_thinking_budget", None),
+                seed=int(cfg.get("seed", 42)),
+            )
+            logger.info(
+                "Compression selection ENABLED (scorer=%s, n_candidates=%d, "
+                "n_actions=%d, agent=%s @ %s)",
+                scorer, self.n_candidates, int(cfg.get("n_actions", 5)),
+                agent_model, agent_base_url,
+            )
+        except Exception as e:  # noqa: BLE001
+            self.compression_selector = None
+            logger.warning("Compression selection disabled (init failed): %r", e)
+
+    def _summary_to_user_prompt(self, summary: str, current_session: List[Dict[str, str]]) -> str:
+        """Rebuild the post-compression user prompt from a summary, honoring
+        `history_summary_rule` (identical text to the inline build below)."""
+        if self.history_summary_rule == "reset":
+            base = self.first_user_prompt
+        elif self.history_summary_rule == "accumulate":
+            base = current_session[1]["content"]
+        else:
+            raise NotImplementedError(f"Unknown history summary rule: {self.history_summary_rule}")
+        return base + "\n\n<HISTORY_SUMMARY>\n" + summary + "\n</HISTORY_SUMMARY>"
+
+    def _run_compression_selection(
+        self,
+        task: str,
+        history_text: str,
+        history_for_summarization: List[Dict[str, str]],
+        current_session: List[Dict[str, str]],
+        preserved_turns: List[Dict[str, str]],
+    ) -> str:
+        """Generate N candidate summaries and pick the least-divergent one.
+
+        Returns the chosen summary string. On any failure, falls back to a
+        single ordinary compression so the run keeps making progress. Records a
+        per-event entry in `self.compression_selection_log` and logs the chosen
+        candidate into the history optimizer's history (for parity with the
+        single-compression path).
+        """
+        selector = self.compression_selector
+        n = self.n_candidates
+
+        # 1. Generate N candidate summaries from the compressor.
+        candidates = self.history_optimizer.generate_candidates(
+            task=task,
+            history=history_text,
+            prev_history_summary=self.prev_history_summary,
+            n=n,
+            temperature=self.candidate_temperature,
+            base_seed=self.candidate_seed,
+        )
+        candidates = [c for c in candidates if (c or "").strip()]
+        if not candidates:
+            raise RuntimeError("compressor returned no usable candidates")
+
+        # 2. Build the candidate sessions (what each summary would install) and
+        #    the uncompressed reference session.
+        cand_inputs = []
+        for s in candidates:
+            up = self._summary_to_user_prompt(s, current_session)
+            msgs = [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": up},
+            ] + [dict(m) for m in preserved_turns]
+            cand_inputs.append({"summary": s, "messages": msgs})
+        reference_messages = deepcopy(current_session)
+
+        # 3. Score and select.
+        result = selector.select(
+            task=task,
+            reference_messages=reference_messages,
+            history_text=history_text,
+            candidates=cand_inputs,
+        )
+        best = result["best_index"]
+        chosen = candidates[best]
+
+        # 4. Logging — per-event selection record + parity entry in the
+        #    history-optimizer history (so history_optimizer_history.json still
+        #    shows the compression that was actually installed).
+        cand_log = []
+        for rec in result.get("candidates", []):
+            entry = {
+                "index": rec.get("index"),
+                "score": rec.get("score"),
+                "summary_tokens": self._count_tokens(rec.get("summary", "")),
+                "judge_reasoning": rec.get("judge_reasoning"),
+            }
+            if "predicted" in rec:
+                entry["predicted_plan"] = rec["predicted"]
+            if "dimensions" in rec:
+                entry["dimensions"] = rec["dimensions"]
+            if "error" in rec:
+                entry["error"] = rec["error"]
+            cand_log.append(entry)
+        self.compression_selection_log.append({
+            "compression_index": len(self.compression_selection_log),
+            "step": self.step,
+            "scorer": result.get("scorer"),
+            "n_candidates": len(candidates),
+            "best_index": best,
+            "scores": result.get("scores"),
+            "reference_plan": result.get("reference_plan"),
+            "candidates": cand_log,
+        })
+        self.history_optimizer.add_to_history(
+            "",
+            self.history_optimizer.convert_llm_history_to_text(history_for_summarization),
+            chosen,
+            {
+                "strategy": "compression_selection",
+                "scorer": result.get("scorer"),
+                "n_candidates": len(candidates),
+                "best_index": best,
+                "scores": result.get("scores"),
+                "compression_budget": self.compression_budget,
+            },
+        )
+        return chosen
 
     def current_history_index(self) -> int:
         """Get the index of the current conversation session."""
@@ -199,26 +392,98 @@ class MemoryManager:
         if self.llm_history:
             self.llm_history[self.current_history_index()] = []
 
+    def _count_tokens(self, text: str) -> int:
+        """Token count using the history optimizer's tokenizer when available."""
+        if self.history_optimizer is not None:
+            try:
+                return self.history_optimizer.count_tokens(text or "")
+            except Exception:
+                pass
+        return max(1, len(text) // 4) if text else 0
+
+    def _snapshot_post_compression(self, strategy: str) -> None:
+        """Record the exact session installed right after a compression event.
+
+        Captures the full rebuilt session (system + user prompt + preserved /
+        selected turns) with per-message and total token counts so you can see
+        what the history was set to and whether it fits the budget.
+        """
+        new_session = self.get_current_session()
+        messages = []
+        total_tokens = 0
+        for msg in new_session:
+            content = msg.get("content", "")
+            n_tok = self._count_tokens(content)
+            total_tokens += n_tok
+            messages.append({
+                "role": msg.get("role"),
+                "tokens": n_tok,
+                "content": content,
+            })
+        self.post_compression_snapshots.append({
+            "compression_index": len(self.post_compression_snapshots),
+            "strategy": strategy,
+            "step": self.step,
+            "compression_budget": self.compression_budget,
+            "session_index": self.current_history_index(),
+            "num_messages": len(messages),
+            "total_tokens": total_tokens,
+            "messages": messages,
+        })
+
+    def _dump_post_compression_text(self, path: str) -> None:
+        """Human-readable dump of every post-compression session."""
+        lines = []
+        for snap in self.post_compression_snapshots:
+            lines.append("=" * 80)
+            lines.append(
+                f"COMPRESSION #{snap['compression_index']} "
+                f"(strategy={snap['strategy']} step={snap['step']} "
+                f"budget={snap['compression_budget']} "
+                f"total_tokens={snap['total_tokens']} "
+                f"messages={snap['num_messages']})"
+            )
+            lines.append("=" * 80)
+            for m in snap["messages"]:
+                lines.append(f"── {m['role'].upper()} ── [{m['tokens']} tok]")
+                lines.append(m["content"])
+                lines.append("")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+
     def dump_history(self, output_dir: str) -> None:
         """
         Save conversation history and alignment data to files.
-        
+
         Args:
             output_dir: Directory to save the history files
         """
         os.makedirs(output_dir, exist_ok=True)
-        
+
         # Save LLM conversation history
         with open(f'{output_dir}/llm_history.json', 'w') as f:
             json.dump(self.llm_history, f, indent=2)
-        
+
         # Save step alignment data
         with open(f'{output_dir}/step_alignment.json', 'w') as f:
             json.dump(self.step_alignment, f, indent=2)
-        
+
+        # Save post-compression session snapshots (what the history was set to
+        # immediately after each compression event).
+        with open(f'{output_dir}/post_compression_history.json', 'w') as f:
+            json.dump(self.post_compression_snapshots, f, indent=2)
+        self._dump_post_compression_text(f'{output_dir}/post_compression_history.txt')
+
+        # Best-of-N compression selection log (candidates, plans, judge scores,
+        # chosen index) — one entry per compression event when selection is on.
+        if self.compression_selection_log:
+            with open(f'{output_dir}/compression_selection.json', 'w') as f:
+                json.dump(self.compression_selection_log, f, indent=2)
+
         print(f"History dumped to {output_dir}/")
         print(f"  - llm_history.json: {len(self.llm_history)} sessions")
         print(f"  - step_alignment.json: {len(self.step_alignment)} alignments")
+        print(f"  - post_compression_history.json: {len(self.post_compression_snapshots)} compression events")
 
         if self.obs_optimizer:
             self.obs_optimizer.dump_history(output_dir)
@@ -448,28 +713,37 @@ class MemoryManager:
                     print(f"   #### Skipping history summarization at step {n_accum_turns} as interval ({self.history_summary_interval}) not met.")
                     return
                 
-                optimized_history = self.history_optimizer.process(
-                    task=task,
-                    history=history_text, # without summary and without preserved turns
-                    prev_history_summary=self.prev_history_summary,
-                    raw_history=history_for_summarization,
-                    # opt_args=opt_args,
-                )
+                optimized_history = None
+                if self.compression_selector is not None:
+                    # Best-of-N: generate N candidate compressions and install
+                    # the one that least perturbs the agent's near-future plan.
+                    try:
+                        optimized_history = self._run_compression_selection(
+                            task=task,
+                            history_text=history_text,
+                            history_for_summarization=history_for_summarization,
+                            current_session=current_session,
+                            preserved_turns=preserved_turns,
+                        )
+                    except Exception as e:
+                        logging.getLogger(__name__).warning(
+                            "Compression selection failed; falling back to single "
+                            "compression: %r", e
+                        )
+                        optimized_history = None
+                if optimized_history is None:
+                    optimized_history = self.history_optimizer.process(
+                        task=task,
+                        history=history_text, # without summary and without preserved turns
+                        prev_history_summary=self.prev_history_summary,
+                        raw_history=history_for_summarization,
+                        # opt_args=opt_args,
+                    )
                 #### TODO: This results in the accumulation of history summaries.
                 # We should not accumulate history summaries, but rather replace the previous one.
-                if self.history_summary_rule == "reset":
-                    # Reset the previous history summary after optimization
-                    user_prompt = self.first_user_prompt + \
-                        "\n\n<HISTORY_SUMMARY>\n" + \
-                        optimized_history + \
-                        "\n</HISTORY_SUMMARY>"
-                elif self.history_summary_rule == "accumulate":
-                    user_prompt = current_session[1]['content'] + \
-                        "\n\n<HISTORY_SUMMARY>\n" + \
-                        optimized_history + \
-                        "\n</HISTORY_SUMMARY>"
-                else:
-                    raise NotImplementedError(f"Unknown history summary rule: {self.history_summary_rule}")
+                # `user_prompt` text is identical to the inline build this helper
+                # replaces (reset -> first_user_prompt, accumulate -> session[1]).
+                user_prompt = self._summary_to_user_prompt(optimized_history, current_session)
             elif self.baseline_strategy == "discard":
                 # check the size of preserved turns
                 print(f"Preserved turns: {len(preserved_turns)}")
@@ -506,6 +780,24 @@ class MemoryManager:
                 optimized_history = ''
                 preserved_turns = selected + preserved_turns
                 user_prompt = current_session[1]['content']
+                # Logging only: selection baselines make no LLM call, so the
+                # history optimizer's history would otherwise be empty. Record
+                # the kept turns as the "compression output" so it shows up in
+                # history_optimizer_history.json like the LLM compressors.
+                if self.history_optimizer is not None:
+                    self.history_optimizer.add_to_history(
+                        '',
+                        self.history_optimizer.convert_llm_history_to_text(
+                            history_for_summarization
+                        ),
+                        self.history_optimizer.convert_llm_history_to_text(selected),
+                        {
+                            "strategy": self.baseline_strategy,
+                            "compression_budget": self.compression_budget,
+                            "input_turns": len(history_for_summarization),
+                            "selected_turns": len(selected),
+                        },
+                    )
             elif self.baseline_strategy == "retrieve":
                 # Retrieve the most-similar prior turns. When compression_budget
                 # is set, keep as many top-similarity pairs as fit in budget;
@@ -552,7 +844,9 @@ class MemoryManager:
                     self.add_user_prompt(msg['content'], new_session=True)
                 elif msg['role'] == 'assistant':
                     self.add_assistant_response(msg['content'], new_session=True)
-            
+
+            self._snapshot_post_compression(self.baseline_strategy)
+
             self.prev_history_summary = optimized_history
         else:
             raise ValueError("History optimizer is not configured.")

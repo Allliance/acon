@@ -1,0 +1,36 @@
+# Best-of-N compression SELECTION via a DIRECT RUBRIC judge (baseline of the
+# online-divergence selector). Same candidate generation, but instead of the
+# plan-divergence score each candidate summary is scored directly by a Gemini
+# judge against a context-compression rubric tuned for AppWorld agentic tasks
+# (state/variable fidelity, progress & next-step continuity, faithfulness,
+# error retention, conciseness — see divergence/online_selection.RubricJudge).
+# No agent plan forecasting is done, so this is much cheaper than divergence.
+#
+#   * agent      : Qwen/Qwen3.5-35B-A3B  (vLLM, VLLM_BASE_URL)
+#   * compressor : Qwen/Qwen3.5-9B       (vLLM, VLLM_COMPRESSOR_BASE_URL)
+#
+# NOTE: implemented for comparison; not run yet.
+type: "history"
+model: "Qwen/Qwen3.5-9B"
+compressor_type: "full"
+prompts:
+  prompt_system: "system_prompt"
+  prompt_history_user: "prompt_history_v2"
+history_summarization_threshold: 6144
+obs_summarization_threshold: 6144
+compression_budget: 2048
+preserve_last_k_turns: 1
+history_summary_rule: "reset"
+compression_selection:
+  enabled: true
+  scorer: "rubric"            # direct rubric scoring (no plan forecasting)
+  n_candidates: 5
+  candidate_temperature: 0.6
+  candidate_seed: 0
+  # Cheaper judge than gemini-3.5-flash (~$89/rep). flash-lite has thinking OFF by
+  # default; we enable DYNAMIC thinking (judge_thinking_budget: -1) for sharper
+  # rubric discrimination. With thinking on: ~$11/rep (vs ~$6 off, ~$89 for 3.5F).
+  #   judge_thinking_budget: null -> model default | 0 -> off | -1 -> dynamic | >0 -> fixed cap
+  judge_model: "gemini-3.1-flash-lite"
+  judge_thinking_budget: -1
+  seed: 42

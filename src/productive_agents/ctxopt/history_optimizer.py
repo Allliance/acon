@@ -135,11 +135,18 @@ class HistoryOptimizer(BaseContextOptimizer):
         if self.use_llmlingua:
             # Flatten the (possibly summarized + tail) message list into text and
             # ask LLMLingua to compress it down to ~compression_budget tokens.
+            # `history` may already be flattened text (memory.py passes the
+            # converted history string) or a raw message list (other callers).
+            hist_txt = (
+                history
+                if isinstance(history, str)
+                else self.convert_llm_history_to_text(history)
+            )
             if prev_history_summary:
                 _history_text = f"<PREVIOUS_SUMMARY>\n{prev_history_summary}\n</PREVIOUS_SUMMARY>\n\n"
-                _history_text += self.convert_llm_history_to_text(history)
+                _history_text += hist_txt
             else:
-                _history_text = self.convert_llm_history_to_text(history)
+                _history_text = hist_txt
             input_tokens = self.count_tokens(_history_text)
             if self.compression_budget and input_tokens > 0:
                 ratio = max(0.05, min(0.95, self.compression_budget / max(input_tokens, 1)))
@@ -152,10 +159,10 @@ class HistoryOptimizer(BaseContextOptimizer):
                 if len(tokens) > self.compression_budget:
                     raw_response = self.tokenizer.decode(tokens[: self.compression_budget])
         else:
-            # Fixed 4096-token decode cap leaves room for Qwen3-style thinking
+            # Fixed 8192-token decode cap leaves room for Qwen3-style thinking
             # plus the bounded summary.
             raw_response = self.llm.generate(
-                prompt, temperature=self.temperature, max_tokens=4096
+                prompt, temperature=self.temperature, max_tokens=8192
             )
             raw_response = (raw_response or "").strip()
             # Hard-truncate the produced summary to the configured token budget
@@ -176,9 +183,67 @@ class HistoryOptimizer(BaseContextOptimizer):
         if self.debug_mode:
             cprint("History Compression", 'red')
             cprint(raw_response, 'blue')
-            
+
         return summary
-    
+
+    def generate_candidates(
+        self,
+        task: str,
+        history: List,
+        prev_history_summary: Optional[str] = None,
+        n: int = 5,
+        temperature: float = 0.6,
+        base_seed: int = 0,
+    ) -> List[str]:
+        """Produce ``n`` candidate history summaries for best-of-N selection.
+
+        Same prompt / parsing / budget-truncation as :meth:`process`, but returns
+        a *list* of ``n`` summary strings instead of one. Diversity comes from
+        sampling: a single ``n``-sample request is tried first (vLLM shares the
+        prompt prefill across the samples, so this is much cheaper than ``n``
+        separate decodes); if the backend doesn't return a list we fall back to
+        ``n`` separately-seeded decodes.
+
+        This method is read-only w.r.t. the optimizer's own ``self.history`` —
+        the caller logs whichever candidate it ends up selecting.
+        """
+        prompt, _prompt_args = self._build_history_prompt(task, history, prev_history_summary)
+
+        raw_list: Optional[List[str]] = None
+        try:
+            out = self.llm.generate(
+                prompt, n=n, temperature=temperature, max_tokens=8192, seed=base_seed
+            )
+            if isinstance(out, list) and len(out) >= 1:
+                raw_list = out
+        except Exception as e:  # noqa: BLE001
+            if self.debug_mode:
+                cprint(f"[generate_candidates] n-sample request failed: {e}", 'red')
+            raw_list = None
+
+        if not raw_list or len(raw_list) < n:
+            # Fallback: separately-seeded single decodes (honors ``temperature``).
+            raw_list = []
+            for j in range(n):
+                r = self.llm.generate(
+                    prompt,
+                    temperature=max(temperature, 0.5),
+                    max_tokens=8192,
+                    seed=base_seed + j,
+                )
+                raw_list.append(r if isinstance(r, str) else (r[0] if r else ""))
+
+        candidates: List[str] = []
+        for raw in raw_list[:n]:
+            raw = (raw or "").strip()
+            # Hard-truncate to the configured token budget (same as process()).
+            if self.compression_budget and raw and self.tokenizer is not None:
+                tokens = self.tokenizer.encode(raw)
+                if len(tokens) > self.compression_budget:
+                    raw = self.tokenizer.decode(tokens[: self.compression_budget])
+            candidates.append(self.parse_output(raw, "# History Summary"))
+        return candidates
+
     def check_summarization_needed(self, history_text: str, prev_history_summary: str=None) -> bool:
         """
         Check if history summarization is needed based on token threshold.
@@ -234,11 +299,11 @@ class HistoryOptimizer(BaseContextOptimizer):
         prompt_args["history"] = history
         # Surface the compression budget to the template so the compressor
         # can target it. `word_budget` is the user-facing limit injected into
-        # the prompt (set to half the token budget so the realized output fits
-        # comfortably under the token cap). Rendered conditionally in Jinja.
+        # the prompt; set equal to the token budget. Rendered conditionally
+        # in Jinja.
         prompt_args["budget"] = self.compression_budget
         if self.compression_budget:
-            prompt_args["word_budget"] = max(1, int(self.compression_budget) // 2)
+            prompt_args["word_budget"] = max(1, int(self.compression_budget))
         template_name = self.history_template
 
         # Render the prompt

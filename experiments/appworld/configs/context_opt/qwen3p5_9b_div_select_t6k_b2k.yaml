@@ -1,0 +1,39 @@
+# Best-of-N compression SELECTION via ONLINE trajectory divergence.
+#   * agent      : Qwen/Qwen3.5-35B-A3B  (vLLM, VLLM_BASE_URL)
+#   * compressor : Qwen/Qwen3.5-9B       (vLLM, VLLM_COMPRESSOR_BASE_URL)
+# History compression triggers at 6144 tokens; each candidate summary budget 2048.
+#
+# At every compression event the compressor generates `n_candidates` candidate
+# summaries (sampled). For each, the AGENT forecasts its next `n_actions` code
+# blocks in one shot; a Gemini judge scores that plan against the agent's plan
+# conditioned on the UNCOMPRESSED history (this turn's compression withheld;
+# earlier compressions stay applied). The least-divergent candidate is installed.
+# Per-event candidates/plans/scores are dumped to compression_selection.json.
+#
+# Base compressor prompt is the DEFAULT (v2) summary prompt. run_parallel.py
+# re-applies history threshold / compression budget from its CLI flags, so the
+# driver passes --history_threshold 6144 --compression_budget 2048.
+type: "history"
+model: "Qwen/Qwen3.5-9B"
+compressor_type: "full"
+prompts:
+  prompt_system: "system_prompt"
+  prompt_history_user: "prompt_history_v2"
+history_summarization_threshold: 6144
+obs_summarization_threshold: 6144
+compression_budget: 2048
+preserve_last_k_turns: 1
+history_summary_rule: "reset"
+compression_selection:
+  enabled: true
+  scorer: "divergence"        # "divergence" (plan similarity) | "rubric"
+  n_candidates: 5             # candidate compressions generated per event
+  n_actions: 5                # next code blocks the agent forecasts per plan
+  candidate_temperature: 0.6  # compressor sampling temperature for diversity
+  candidate_seed: 0
+  max_gen_tokens: 2048        # decode cap per forecasted plan
+  agent_temperature: 0.0      # plan-forecast decoding (greedy, matches offline study)
+  agent_enable_thinking: false
+  judge_model: "gemini-3.5-flash"
+  seed: 42
+  # agent_base_url / agent_model auto-resolve from VLLM_BASE_URL + agent config.
