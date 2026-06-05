@@ -1,0 +1,7 @@
+The text between the BEGIN_TRAJECTORY and END_TRAJECTORY markers below is a transcript of an LLM agent's past interactions with its environment. The transcript uses role markers (`ASSISTANT:`, `USER:`, `SYSTEM:`, etc.) because that is how the original conversation was recorded. **Do NOT continue the conversation, role-play as the agent, or generate new actions.** Your only job is to read the transcript and emit a faithful, compressed summary of what happened in it.
+
+BEGIN_TRAJECTORY
+{{ history }}
+END_TRAJECTORY
+
+Now produce the summary. Output ONLY the summary text — no preamble, no role markers, no fabricated tool calls or environment responses.

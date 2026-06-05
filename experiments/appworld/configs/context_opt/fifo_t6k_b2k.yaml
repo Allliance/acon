@@ -1,0 +1,20 @@
+# FIFO baseline: keep most recent turns that fit within `compression_budget` tokens.
+# No LLM is loaded for this baseline (selection-only).
+# History compression triggers at 6144 tokens; kept-history budget 2048.
+#
+# NOTE: run_parallel.py re-applies history/obs threshold and compression
+# budget from its CLI flags, so the driver passes
+#   --history_threshold 6144 --compression_budget 2048
+# explicitly to keep the YAML and the effective run in agreement.
+type: "history"
+model: "none"
+compressor_type: "full"
+prompts:
+  prompt_system: "system_prompt"
+  prompt_history_user: "prompt_history_v2"
+history_summarization_threshold: 6144
+obs_summarization_threshold: 6144
+baseline_strategy: "fifo"
+compression_budget: 2048
+preserve_last_k_turns: 1
+history_summary_rule: "reset"

@@ -1,0 +1,20 @@
+# Self-compress baseline: Qwen3.5-35B-A3B is BOTH the agent and the compressor.
+# History compression triggers at 4096 tokens; compressed summary budget 2048.
+# Point the agent + compressor at the same remote vLLM server (one model,
+# one endpoint) via VLLM_BASE_URL.
+#
+# NOTE: run_parallel.py re-applies history/obs threshold and compression
+# budget from its CLI flags, so the driver passes
+#   --history_threshold 4096 --compression_budget 2048
+# explicitly to keep the YAML and the effective run in agreement.
+type: "history"
+model: "Qwen/Qwen3.5-35B-A3B"
+compressor_type: "full"
+prompts:
+  prompt_system: "system_prompt"
+  prompt_history_user: "prompt_history_v2"
+history_summarization_threshold: 4096
+obs_summarization_threshold: 4096
+compression_budget: 2048
+preserve_last_k_turns: 1
+history_summary_rule: "reset"

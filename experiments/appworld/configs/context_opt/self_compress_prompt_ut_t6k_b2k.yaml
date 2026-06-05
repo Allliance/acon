@@ -1,0 +1,19 @@
+# Self-compress baseline with the structured "ut" prompt:
+# the agent (Qwen3.5-35B-A3B) compresses its own history.
+#   * agent      : Qwen/Qwen3.5-35B-A3B  (vLLM, VLLM_BASE_URL)
+#   * compressor : Qwen/Qwen3.5-35B-A3B  (vLLM, VLLM_COMPRESSOR_BASE_URL)
+# History compression triggers at 6144 tokens; compressed summary budget 2048.
+#
+# Uses `compression_prompt_ut.jinja` (sections: REASONING / VARS table /
+# TODO / COMPLETED / GUARDRAILS) instead of the v2 prompt.
+type: "history"
+model: "Qwen/Qwen3.5-35B-A3B"
+compressor_type: "full"
+prompts:
+  prompt_system: "system_prompt"
+  prompt_history_user: "compression_prompt_ut"
+history_summarization_threshold: 6144
+obs_summarization_threshold: 6144
+compression_budget: 2048
+preserve_last_k_turns: 1
+history_summary_rule: "reset"

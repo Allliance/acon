@@ -1,0 +1,23 @@
+# Cross-model compress baseline: gpt-oss-120b compresses the history for a
+# Qwen3.5-35B-A3B agent.
+#   * agent      : Qwen/Qwen3.5-35B-A3B  (vLLM, VLLM_BASE_URL)
+#   * compressor : openai/gpt-oss-120b   (vLLM, VLLM_COMPRESSOR_BASE_URL)
+# History compression triggers at 6144 tokens; compressed summary budget 2048.
+#
+# NOTE: "gpt-oss" routes to vLLM (LLMManager.create_llm explicitly excludes it
+# from OpenAI detection), so the compressor endpoint is resolved from
+# VLLM_COMPRESSOR_BASE_URL at runtime, NOT the OpenAI API. run_parallel.py
+# re-applies threshold/budget from CLI flags, so the driver passes
+#   --history_threshold 6144 --compression_budget 2048
+# explicitly to keep the YAML and the effective run in agreement.
+type: "history"
+model: "openai/gpt-oss-120b"
+compressor_type: "full"
+prompts:
+  prompt_system: "system_prompt"
+  prompt_history_user: "prompt_history_v2"
+history_summarization_threshold: 6144
+obs_summarization_threshold: 6144
+compression_budget: 2048
+preserve_last_k_turns: 1
+history_summary_rule: "reset"

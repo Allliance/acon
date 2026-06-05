@@ -1,0 +1,19 @@
+# Cross-model compress baseline with the structured "utco" prompt:
+# Qwen3.5-27B compresses the history for a Qwen3.5-35B-A3B agent.
+#   * agent      : Qwen/Qwen3.5-35B-A3B  (vLLM, VLLM_BASE_URL)
+#   * compressor : Qwen/Qwen3.5-27B      (vLLM, VLLM_COMPRESSOR_BASE_URL)
+# History compression triggers at 6144 tokens; compressed summary budget 2048.
+#
+# Uses `compression_prompt_utco.jinja` (compact "co" variant with explicit
+# compression rules + tighter section formats).
+type: "history"
+model: "Qwen/Qwen3.5-27B"
+compressor_type: "full"
+prompts:
+  prompt_system: "system_prompt"
+  prompt_history_user: "compression_prompt_utco"
+history_summarization_threshold: 6144
+obs_summarization_threshold: 6144
+compression_budget: 2048
+preserve_last_k_turns: 1
+history_summary_rule: "reset"

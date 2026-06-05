@@ -1,0 +1,24 @@
+# Inline-summarizer prompt baseline: Qwen3.5-27B compresses history for a
+# Qwen3.5-35B-A3B agent using the verbatim "inline" summarizer prompt from
+# trajectory_qa/evaluate_compressor.py (the system message that explicitly
+# tells the compressor to copy ids/tokens/numbers verbatim and not lose info).
+#
+#   * agent      : Qwen/Qwen3.5-35B-A3B   (vLLM, VLLM_BASE_URL)
+#   * compressor : Qwen/Qwen3.5-27B       (vLLM, VLLM_COMPRESSOR_BASE_URL)
+#
+# System message: prompts/context_opt/system_inline_summarizer.jinja
+# User message  : prompts/context_opt/prompt_history_inline.jinja (raw {{ history }})
+#
+# Triggers compression at 6144 tokens history; compressed summary budget 2048.
+# Driver also passes --history_threshold 6144 --compression_budget 2048.
+type: "history"
+model: "Qwen/Qwen3.5-27B"
+compressor_type: "full"
+prompts:
+  prompt_system: "system_inline_summarizer"
+  prompt_history_user: "prompt_history_inline"
+history_summarization_threshold: 6144
+obs_summarization_threshold: 6144
+compression_budget: 2048
+preserve_last_k_turns: 1
+history_summary_rule: "reset"

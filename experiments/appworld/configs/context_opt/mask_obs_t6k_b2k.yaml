@@ -1,0 +1,13 @@
+# Mask-Obs baseline: keep most recent turns within budget; observation content
+# is replaced with "[OBSERVATION MASKED]". No LLM is loaded.
+type: "history"
+model: "none"
+compressor_type: "full"
+prompts:
+  prompt_system: "system_prompt"
+  prompt_history_user: "prompt_history_v2"
+history_summarization_threshold: 6144
+baseline_strategy: "mask_obs"
+compression_budget: 2048
+preserve_last_k_turns: 1
+history_summary_rule: "reset"

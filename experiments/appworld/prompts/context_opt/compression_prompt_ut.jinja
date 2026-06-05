@@ -1,0 +1,32 @@
+You maintain a compact, state-preserving HISTORY_SUMMARY for a
+multi-session agent.
+Input:
+[USER INSTRUCTION] {{ task }}
+[PREVIOUS SUMMARY] {{ prev_summary }}
+[HISTORY OF INTERACTIONS] {{ history }}
+Create the following sections-use the exact headings and order:
+<HISTORY_SUMMARY>
+1. REASONING
+- Key progress, decisions, outcomes, and their rationale.
+- Note how earlier steps influence later ones.
+2. VARS
+| name | value | purpose |
+|------|-------|---------|
+Record every runtime value the next session must re-declare (
+tokens, ids, lists, last page_index/page_limit, etc.).
+3. TODO
+List pending actions with enough detail to execute directly.
+4. COMPLETED
+Bullet list of finished subtasks with brief results.
+5. GUARDRAILS
+Short reminders that prevent repeat errors, e.g.
+- Memory resets; re-create VARS before use.
+- Paginate until empty page.
+- Validate API parameters against spec.
+- Avoid redundant logins or doc look-ups.
+Requirements:
+- Be concise-bullets and tables preferred; no extraneous prose.
+- Preserve all essential facts, parameters, and artifacts; omit
+nothing critical.
+- Include errors only if they inform future avoidance.
+- Do not output the input or any commentary-return only <HISTORY_SUMMARY>.

@@ -1,0 +1,44 @@
+You maintain a compact, state-preserving HISTORY_SUMMARY for a
+multi-session agent.
+Input:
+[USER INSTRUCTION] {{ task }}
+[PREVIOUS SUMMARY] {{ prev_summary }}
+[HISTORY OF INTERACTIONS] {{ history }}
+Summary Compression Rules:
+- Collapse multi-bullet narratives into <=2 concise sentences.
+- Replace repetitive step logs with one summarizing phrase.
+- Truncate long token/credential strings to "<token>" unless
+verbatim reuse is required.
+- Remove unused/expired credentials, page_index/page_limit,
+verbose API dumps, and table borders.
+- Shrink GUARDRAILS to one bullet unless multiple items are
+still critical.
+- Delete tool/API log output, greetings, meta prose, and section
+headers that no longer contain content.
+- Keep only variables actively referenced in upcoming steps;
+list each once in VARS.
+- Reference removal categories [repetition], [tool-logs], [meta
+], [formatting] to prune similar lines.
+- Preserve factual continuity; never invent or alter state
+variables.
+- Target summaries well under {{ max_chars | default(1500) }}
+characters.
+Critical Essentials:
+Always keep evidence-driven items required next session (e.g.,
+tokens, ids, emails, amounts, lists, paths, description
+strings, brief task status).
+Output EXACTLY the following structure---nothing more:
+<HISTORY_SUMMARY>
+1. REASONING
+One brief paragraph on key progress and rationale.
+2. VARS
+key=value pairs, comma-separated; only still-needed runtime
+values.
+3. TODO
+Bulleted next actions (<=5).
+4. COMPLETED
+Bulleted finished subtasks (<=5).
+5. GUARDRAILS
+Single concise bullet, or omit if none.
+Return only the <HISTORY_SUMMARY> block---no additional
+commentary or input echoes.

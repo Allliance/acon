@@ -1,0 +1,21 @@
+# Compressor baseline: gpt-4.1 (OpenAI API) compresses the history for a
+# Qwen3.5-35B-A3B agent served by a remote vLLM endpoint.
+#   * agent      : Qwen/Qwen3.5-35B-A3B  (vLLM, VLLM_BASE_URL)
+#   * compressor : gpt-4.1               (OpenAI, key from .env / private_config)
+# History compression triggers at 4096 tokens; compressed summary budget 2048.
+#
+# NOTE: run_parallel.py re-applies history/obs threshold and compression
+# budget from its CLI flags, so the driver passes
+#   --history_threshold 4096 --compression_budget 2048
+# explicitly to keep the YAML and the effective run in agreement.
+type: "history"
+model: "gpt-4.1"
+compressor_type: "full"
+prompts:
+  prompt_system: "system_prompt"
+  prompt_history_user: "prompt_history_v2"
+history_summarization_threshold: 4096
+obs_summarization_threshold: 4096
+compression_budget: 2048
+preserve_last_k_turns: 1
+history_summary_rule: "reset"
