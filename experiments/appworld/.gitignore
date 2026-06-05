@@ -1,0 +1,11 @@
+# Generated/cached experiment artifacts kept local (outputs/, logs/, __pycache__/
+# are already covered by the repo-root .gitignore).
+
+# Cached compressions (segmentation + summaries) — regenerable
+*/compressions/
+
+# Large self-consistency replay / verdict dumps
+selfconsistency/*.jsonl
+
+# Cached input trajectories (large; produced by trajectory runs)
+trajectory_qa/Qwen3.5_35B_A3B_dev_full/
